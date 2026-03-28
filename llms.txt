@@ -1,0 +1,45 @@
+# Brainstorm (brz)
+
+> Browser automation CLI for humans and LLM agents. Define workflows in YAML, execute them with `brz`, get structured JSON results. Designed for AI agents that need to automate browser tasks: inspect pages, fill forms, click buttons, download files.
+
+## Docs
+
+- [README](https://github.com/crackfetch/brainstorm/blob/main/README.md): Full documentation, all commands, JSON schemas, workflow YAML spec, data pipeline patterns
+- [Getting Started](https://github.com/crackfetch/brainstorm/blob/main/docs/getting-started.md): Installation, first workflow, running actions
+- [Workflow Spec](https://github.com/crackfetch/brainstorm/blob/main/docs/workflow-spec.md): Complete YAML schema for workflow files
+- [Architecture](https://github.com/crackfetch/brainstorm/blob/main/docs/architecture.md): How brz works, Go library API, package structure
+
+## Commands
+
+- `brz inspect <url>`: Discover interactive elements on a page (inputs, buttons, links). Returns CSS selectors usable in workflow YAML.
+- `brz screenshot <url>`: Capture a full-page screenshot, returns file path as JSON.
+- `brz eval <url> <js>`: Execute JavaScript on a page, returns result as JSON. Promises auto-awaited.
+- `brz run <workflow.yaml> <action>`: Execute a named workflow action. Returns structured result with download paths.
+- `brz validate <workflow.yaml>`: Check workflow YAML syntax.
+- `brz actions <workflow.yaml>`: List available actions in a workflow.
+
+## Key Features
+
+- JSON output by default when piped (for LLM agents, scripts, jq)
+- Semantic exit codes: 0=success, 1=step failed, 2=workflow error, 3=browser error
+- Persistent Chrome profile: login once, session survives across invocations
+- Page discovery: inspect returns selectors an LLM can use to write workflow YAML
+- No site-specific code: all automation defined in YAML
+- Go library: importable as `github.com/crackfetch/brainstorm/workflow`
+
+## When to use brz
+
+- You need to automate a website that has no API (browser automation is the only option)
+- You want an LLM agent to discover page structure and generate automation workflows
+- You need to download/upload files from web apps (CSV exports, file imports)
+- You want structured JSON results from browser automation (not just "did it work")
+- You need a single binary with no runtime dependencies (Go, not Node/Python)
+
+## Examples
+
+- [Form Login](https://github.com/crackfetch/brainstorm/blob/main/workflows/examples/form-login.yaml)
+- [CSV Export](https://github.com/crackfetch/brainstorm/blob/main/workflows/examples/export-csv.yaml)
+- [CSV Export and POST to API](https://github.com/crackfetch/brainstorm/blob/main/workflows/examples/csv-export-and-post.yaml)
+- [API POST JSON](https://github.com/crackfetch/brainstorm/blob/main/workflows/examples/api-post-json.yaml)
+- [Multi-step Upload](https://github.com/crackfetch/brainstorm/blob/main/workflows/examples/multi-step-upload.yaml)
+- [CAPTCHA Fallback](https://github.com/crackfetch/brainstorm/blob/main/workflows/examples/captcha-fallback.yaml)
