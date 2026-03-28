@@ -1,0 +1,38 @@
+# Example: Download a file from one page, upload it to another
+#
+# Demonstrates: download, upload with source: "result", wait_text, sleep
+#
+# Common pattern for data transfer workflows:
+# 1. Export data from source system
+# 2. Upload to destination system
+# 3. Wait for processing confirmation
+
+name: multi-step-upload-example
+actions:
+  export_from_source:
+    url: https://source.example.com/data/export
+    steps:
+      - label: "Click export button"
+        click: { selector: '#export-btn' }
+      - label: "Download the exported file"
+        download: { timeout: '60s' }
+
+  import_to_destination:
+    url: https://dest.example.com/data/import
+    steps:
+      # Step 1: Open import dialog
+      - label: "Click import"
+        click: { selector: '#import-btn' }
+      - label: "Wait for upload form"
+        wait_visible: { selector: 'input[type="file"]', timeout: '10s' }
+
+      # Step 2: Upload the file from the previous export
+      - label: "Select file"
+        upload: { selector: 'input[type="file"]', source: 'result' }
+
+      # Step 3: Submit and wait for confirmation
+      - label: "Submit upload"
+        click: { selector: '#submit-upload' }
+      - label: "Wait for processing"
+        wait_text: { text: 'Import complete', timeout: '120s' }
+      - screenshot: "upload_complete.png"

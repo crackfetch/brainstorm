@@ -1,0 +1,22 @@
+# Example: Login to a web application
+#
+# Demonstrates: fill, click, wait_url, environment variable interpolation
+#
+# Required env vars:
+#   APP_EMAIL    - your account email
+#   APP_PASSWORD - your account password
+
+name: form-login-example
+actions:
+  login:
+    url: https://app.example.com/login
+    steps:
+      - label: "Enter email"
+        fill: { selector: 'input[name="email"]', value: '${APP_EMAIL}' }
+      - label: "Enter password"
+        fill: { selector: 'input[name="password"]', value: '${APP_PASSWORD}' }
+      - label: "Submit login form"
+        click: { selector: 'button[type="submit"]' }
+      - label: "Wait for dashboard"
+        wait_url: { match: '/dashboard', timeout: '30s' }
+      - screenshot: "logged_in.png"

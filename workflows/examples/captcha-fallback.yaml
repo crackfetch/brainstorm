@@ -1,0 +1,32 @@
+# Example: Login with CAPTCHA fallback
+#
+# Demonstrates: multiple actions for fallback chains, wait_url with long timeout
+#
+# Pattern: Try session-based login first (fast, headless).
+# If session is expired, fall back to manual login with a long timeout
+# so the user can solve a CAPTCHA in headed mode.
+#
+# The calling application decides when to use each action:
+#   1. Try "login_session" (check if existing cookies work)
+#   2. On failure + headed mode: try "login_manual"
+#   3. On failure + headless: abort with guidance
+
+name: captcha-fallback-example
+actions:
+  login_session:
+    url: https://app.example.com/dashboard
+    steps:
+      - label: "Check if session is still valid"
+        wait_url: { match: '/dashboard', timeout: '10s' }
+
+  login_manual:
+    url: https://app.example.com/login
+    steps:
+      - label: "Fill email"
+        fill: { selector: '#email', value: '${APP_EMAIL}' }
+      - label: "Fill password"
+        fill: { selector: '#password', value: '${APP_PASSWORD}' }
+      - label: "Submit"
+        click: { selector: '#submit' }
+      - label: "Wait for login (CAPTCHA may appear, user solves manually)"
+        wait_url: { match: '/dashboard', timeout: '120s' }

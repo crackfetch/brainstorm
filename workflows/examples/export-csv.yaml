@@ -1,0 +1,20 @@
+# Example: Export a CSV from a web application
+#
+# Demonstrates: click, download, the click-then-download pattern
+#
+# The download step must immediately follow the click that triggers it.
+# brz automatically sets up the download listener before the click.
+
+name: export-csv-example
+actions:
+  export:
+    url: https://app.example.com/reports
+    steps:
+      - label: "Wait for export button to load"
+        wait_visible: { selector: '#export-csv-btn', timeout: '10s' }
+      - label: "Click export"
+        click: { selector: '#export-csv-btn' }
+      - label: "Wait for CSV download"
+        download: { timeout: '60s' }
+      # After this, the CSV content is available in LastResult
+      # and the file path in LastDownload

@@ -1,0 +1,31 @@
+# Example: Extract data from a page using JavaScript
+#
+# Demonstrates: eval, wait_visible, navigate
+#
+# The eval step runs JavaScript in the browser context.
+# Useful for extracting data that isn't available via simple selectors.
+
+name: scrape-with-js-example
+actions:
+  extract_data:
+    url: https://app.example.com/orders
+    steps:
+      - label: "Wait for table to load"
+        wait_visible: { selector: 'table.orders-table', timeout: '15s' }
+
+      - label: "Extract order data from DOM"
+        eval: |
+          (() => {
+            const rows = document.querySelectorAll('table.orders-table tbody tr');
+            const data = Array.from(rows).map(row => {
+              const cells = row.querySelectorAll('td');
+              return {
+                id: cells[0]?.textContent.trim(),
+                date: cells[1]?.textContent.trim(),
+                amount: cells[2]?.textContent.trim()
+              };
+            });
+            console.log(JSON.stringify(data));
+          })()
+
+      - screenshot: "extracted_data.png"
