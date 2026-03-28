@@ -40,6 +40,17 @@ changelog:
       - "^test:"
       - "^chore:"
 
+brews:
+  - repository:
+      owner: crackfetch
+      name: homebrew-tap
+    name: brz
+    homepage: "https://github.com/crackfetch/brainstorm"
+    description: "Browser automation CLI for humans and LLM agents"
+    license: "MIT"
+    install: |
+      bin.install "brz"
+
 release:
   github:
     owner: crackfetch
