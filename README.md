@@ -279,6 +279,141 @@ Do not put other steps between the click and the download.
 
 ---
 
+## Data Pipeline Patterns
+
+These are the core patterns for moving data between systems. See `workflows/examples/` for complete YAML files.
+
+### Export a CSV
+
+```yaml
+export_inventory:
+  url: https://seller.example.com/inventory/export
+  steps:
+    - wait_visible: { selector: '#export-csv', timeout: '10s' }
+    - click: { selector: '#export-csv' }
+    - download: { timeout: '120s' }
+```
+
+```bash
+# Run it, get the file path
+file=$(brz run workflow.yaml export_inventory | jq -r '.download')
+cat "$file"  # the CSV content
+```
+
+### Export with date range filters
+
+Pass dates dynamically via `--env`:
+
+```yaml
+export_orders:
+  url: https://seller.example.com/orders
+  steps:
+    - fill: { selector: '#date-from', value: '${DATE_FROM}', clear: true }
+    - fill: { selector: '#date-to', value: '${DATE_TO}', clear: true }
+    - click: { selector: '#apply-filter' }
+    - wait_visible: { selector: '.results-table', timeout: '30s' }
+    - click: { selector: '#export-csv' }
+    - download: { timeout: '120s' }
+```
+
+```bash
+brz run workflow.yaml export_orders --env DATE_FROM=01/01/2024 --env DATE_TO=03/31/2024
+```
+
+### POST data to an API with `eval`
+
+Use `eval` with `fetch()` to call APIs directly from the browser context:
+
+```yaml
+post_to_api:
+  url: https://seller.example.com
+  steps:
+    - label: "POST data to API"
+      eval: |
+        const resp = await fetch('${API_URL}/api/v1/sync', {
+          method: 'POST',
+          headers: {
+            'Authorization': 'Bearer ${API_KEY}',
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ name: '${NAME}', price: parseFloat('${PRICE}') })
+        });
+        if (!resp.ok) throw new Error('API error: ' + resp.status);
+        return await resp.json();
+```
+
+```bash
+brz run workflow.yaml post_to_api \
+  --env API_URL=https://api.myapp.com \
+  --env API_KEY=sk_123 \
+  --env NAME="Widget" \
+  --env PRICE=9.99
+```
+
+### POST a CSV to an API
+
+Download a CSV from the browser, then POST it to your backend:
+
+```yaml
+upload_csv_to_api:
+  steps:
+    - label: "Read the last downloaded CSV and POST it"
+      eval: |
+        const form = new FormData();
+        const blob = new Blob([document.brz_last_result], { type: 'text/csv' });
+        form.append('file', blob, 'inventory.csv');
+        const resp = await fetch('${API_URL}/api/v1/import', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ${API_KEY}' },
+          body: form
+        });
+        if (!resp.ok) throw new Error('Upload failed: ' + resp.status);
+        return await resp.json();
+```
+
+### Download → transform → re-upload
+
+Export a CSV, upload the modified version back:
+
+```yaml
+import_prices:
+  url: https://seller.example.com/pricing/import
+  steps:
+    - click: { selector: '#import-btn' }
+    - wait_visible: { selector: '.import-dialog', timeout: '10s' }
+    - upload: { selector: 'input[type="file"]', source: 'result' }
+    - click: { selector: '#validate-import' }
+    - wait_text: { text: 'Validation complete', timeout: '60s' }
+    - click: { selector: '#confirm-import' }
+    - wait_text: { text: 'Import complete', timeout: '120s' }
+```
+
+```bash
+# Chain: export prices, then import updated prices
+brz run workflow.yaml export_prices && brz run workflow.yaml import_prices
+```
+
+### One-shot eval for quick API calls
+
+No workflow needed — use `brz eval` directly:
+
+```bash
+# GET an API endpoint
+brz eval https://api.example.com "await fetch('/api/status').then(r => r.json())"
+
+# POST JSON
+brz eval https://api.example.com "await fetch('/api/records', {
+  method: 'POST',
+  headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer sk_123'},
+  body: JSON.stringify({name: 'test', value: 42})
+}).then(r => r.json())"
+
+# Check response status
+brz eval https://api.example.com "await fetch('/api/health').then(r => ({status: r.status, ok: r.ok}))"
+```
+
+---
+
 ## Output Behavior
 
 All commands follow the same output convention:

@@ -1,0 +1,54 @@
+# Example: Export CSV from a web app, then POST it to an API
+#
+# Demonstrates: download, eval (fetch POST), the full data pipeline
+#
+# Pattern: browser export → download CSV → POST to API via fetch()
+# This is the core "data mover" workflow for syncing data between systems.
+#
+# The eval step uses fetch() to POST data. The downloaded CSV content is
+# available as the page's last downloaded file, but for API uploads you
+# typically use eval with fetch() for more control over headers and format.
+
+name: csv-export-and-post
+env:
+  API_URL: https://api.example.com
+  API_KEY: ${API_KEY}
+
+actions:
+  # Step 1: Log into the source system
+  login:
+    url: https://seller.example.com/login
+    steps:
+      - fill: { selector: 'input[name="email"]', value: '${EMAIL}' }
+      - fill: { selector: 'input[name="password"]', value: '${PASSWORD}' }
+      - click: { selector: 'button[type="submit"]' }
+      - wait_url: { match: 'dashboard', timeout: '30s' }
+
+  # Step 2: Export inventory CSV
+  export_inventory:
+    url: https://seller.example.com/inventory/export
+    steps:
+      - label: "Wait for page to load"
+        wait_visible: { selector: '#export-csv', timeout: '10s' }
+      - label: "Click export"
+        click: { selector: '#export-csv' }
+      - label: "Download CSV"
+        download: { timeout: '120s' }
+      # CSV is now at LastDownload path and content is in LastResult
+
+  # Step 3: POST the CSV to your API using fetch()
+  upload_to_api:
+    steps:
+      - label: "POST CSV to API"
+        eval: |
+          const csv = document.brz_last_result;
+          const resp = await fetch('${API_URL}/api/v1/sync', {
+            method: 'POST',
+            headers: {
+              'Authorization': 'Bearer ${API_KEY}',
+              'Content-Type': 'text/csv'
+            },
+            body: csv
+          });
+          if (!resp.ok) throw new Error('API error: ' + resp.status);
+          return await resp.json();

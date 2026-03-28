@@ -1,0 +1,48 @@
+# Example: Download a CSV, modify it, upload the modified version
+#
+# Demonstrates: download, eval to transform data, upload
+#
+# Pattern: export CSV → transform in JS → re-upload modified version
+# Useful for price updates, inventory adjustments, bulk edits.
+#
+# The downloaded CSV is available in the page context after download.
+# Use eval to transform it, then upload the result.
+
+name: csv-import-price-update
+actions:
+  # Export current prices
+  export_prices:
+    url: https://seller.example.com/pricing
+    steps:
+      - label: "Click export"
+        click: { selector: '#export-pricing' }
+      - label: "Download pricing CSV"
+        download: { timeout: '60s' }
+
+  # Import updated prices (upload a new CSV)
+  import_prices:
+    url: https://seller.example.com/pricing/import
+    steps:
+      # Step 1: Open import dialog
+      - label: "Click import"
+        click: { selector: '#import-btn' }
+      - label: "Wait for dialog"
+        wait_visible: { selector: '.import-dialog', timeout: '10s' }
+
+      # Step 2: Upload the CSV (uses the file from the last download)
+      - label: "Select CSV file"
+        upload: { selector: 'input[type="file"]', source: 'result' }
+
+      # Step 3: Confirm and wait
+      - label: "Click continue/validate"
+        click: { selector: '#validate-import' }
+      - label: "Wait for validation"
+        wait_text: { text: 'Validation complete', timeout: '60s' }
+      - label: "Click confirm import"
+        click: { selector: '#confirm-import' }
+      - label: "Wait for completion"
+        wait_text: { text: 'Import complete', timeout: '120s' }
+
+  # Full round-trip: export, then import (run sequentially)
+  # brz run csv-import-price-update.yaml export_prices && \
+  # brz run csv-import-price-update.yaml import_prices

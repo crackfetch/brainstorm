@@ -1,0 +1,64 @@
+# Example: POST JSON data to an API endpoint
+#
+# Demonstrates: eval with fetch(), JSON POST, reading API responses
+#
+# Use eval steps with fetch() to interact with APIs directly from the
+# browser context. This is useful when a web app doesn't have an export
+# button but does have API endpoints you can call.
+#
+# The eval step automatically awaits Promises, so async fetch() works.
+
+name: api-post-json
+env:
+  BASE_URL: https://app.example.com
+  API_TOKEN: ${API_TOKEN}
+
+actions:
+  # POST a JSON payload to an API endpoint
+  create_record:
+    url: ${BASE_URL}
+    steps:
+      - label: "Create a new record via API"
+        eval: |
+          const resp = await fetch('${BASE_URL}/api/records', {
+            method: 'POST',
+            headers: {
+              'Authorization': 'Bearer ${API_TOKEN}',
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              name: '${RECORD_NAME}',
+              category: '${CATEGORY}',
+              price: parseFloat('${PRICE}')
+            })
+          });
+          if (!resp.ok) throw new Error('POST failed: ' + resp.status + ' ' + await resp.text());
+          return await resp.json();
+
+  # GET data from an API and return it
+  fetch_status:
+    url: ${BASE_URL}
+    steps:
+      - label: "Check API status"
+        eval: |
+          const resp = await fetch('${BASE_URL}/api/status', {
+            headers: { 'Authorization': 'Bearer ${API_TOKEN}' }
+          });
+          return await resp.json();
+
+  # POST form data (multipart)
+  upload_file_via_api:
+    url: ${BASE_URL}
+    steps:
+      - label: "Upload file via API"
+        eval: |
+          const form = new FormData();
+          form.append('file', new Blob(['${FILE_CONTENT}'], { type: 'text/csv' }), 'data.csv');
+          form.append('description', '${DESCRIPTION}');
+          const resp = await fetch('${BASE_URL}/api/upload', {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ${API_TOKEN}' },
+            body: form
+          });
+          if (!resp.ok) throw new Error('Upload failed: ' + resp.status);
+          return await resp.json();

@@ -1,0 +1,35 @@
+# Example: Export CSV with date range filters
+#
+# Demonstrates: fill with clear, date inputs, parameterized exports
+#
+# Many web apps let you filter data by date range before exporting.
+# Use --env flags to pass dates dynamically:
+#
+#   brz run csv-date-range-export.yaml export \
+#     --env DATE_FROM=01/01/2024 \
+#     --env DATE_TO=03/31/2024
+#
+# An LLM agent can compute dates and pass them in.
+
+name: csv-date-range-export
+actions:
+  export:
+    url: https://app.example.com/reports
+    steps:
+      # Set the date range
+      - label: "Clear and set start date"
+        fill: { selector: 'input#date-from', value: '${DATE_FROM}', clear: true }
+      - label: "Clear and set end date"
+        fill: { selector: 'input#date-to', value: '${DATE_TO}', clear: true }
+
+      # Apply the filter
+      - label: "Click apply/filter"
+        click: { selector: '#apply-filter' }
+      - label: "Wait for results to load"
+        wait_visible: { selector: '.results-table', timeout: '30s' }
+
+      # Export
+      - label: "Click export CSV"
+        click: { selector: '#export-csv' }
+      - label: "Download"
+        download: { timeout: '120s' }
