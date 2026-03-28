@@ -44,6 +44,7 @@ brews:
   - repository:
       owner: crackfetch
       name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     name: brz
     homepage: "https://github.com/crackfetch/brainstorm"
     description: "Browser automation CLI for humans and LLM agents"
