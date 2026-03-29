@@ -92,14 +92,27 @@ func addBrowserFlags(fs *flag.FlagSet) *browserFlags {
 	return bf
 }
 
+// resolveHeaded returns (headed, autoHeaded) from flags + config.
+func resolveHeaded(flagHeaded bool, cfg *config.Config) (bool, bool) {
+	if flagHeaded || cfg.Headed == "1" {
+		return true, false
+	}
+	if cfg.Headed == "auto" {
+		return false, true
+	}
+	return false, false
+}
+
 // startBrowser creates and starts an Executor from flags + config.
 // Returns the executor and whether JSON output is requested.
 func startBrowser(bf *browserFlags) (*workflow.Executor, bool) {
 	useJSON := bf.json || !term.IsTerminal(int(os.Stdout.Fd()))
 	cfg := config.Load()
 
+	headed, autoHeaded := resolveHeaded(bf.headed, cfg)
 	opts := []workflow.Option{
-		workflow.WithHeaded(bf.headed || cfg.Headed),
+		workflow.WithHeaded(headed),
+		workflow.WithAutoHeaded(autoHeaded),
 		workflow.WithDebug(bf.debug || cfg.Debug),
 	}
 	if bf.ephemeral {
@@ -150,8 +163,10 @@ func cmdRun(args []string) {
 	// Load env config
 	cfg := config.Load()
 
+	headed, autoHeaded := resolveHeaded(bf.headed, cfg)
 	opts := []workflow.Option{
-		workflow.WithHeaded(bf.headed || cfg.Headed),
+		workflow.WithHeaded(headed),
+		workflow.WithAutoHeaded(autoHeaded),
 		workflow.WithDebug(bf.debug || cfg.Debug),
 	}
 	if bf.ephemeral {
@@ -190,6 +205,7 @@ func cmdRun(args []string) {
 	}
 
 	if !result.OK {
+		exec.WaitOnFailure()
 		os.Exit(exitActionFailed)
 	}
 }

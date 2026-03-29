@@ -13,4 +13,7 @@ type ActionResult struct {
 	FailedStep   int    `json:"failed_step,omitempty"`
 	StepType     string `json:"step_type,omitempty"`
 	Screenshot   string `json:"screenshot,omitempty"`
+	PageHTML     string `json:"page_html,omitempty"`  // page HTML at time of failure (for debugging)
+	PageURL      string `json:"page_url,omitempty"`   // page URL at time of failure
+	Escalated    bool   `json:"escalated,omitempty"`  // true if auto-escalated from headless to headed
 }

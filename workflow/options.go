@@ -8,6 +8,12 @@ func WithHeaded(b bool) Option {
 	return func(e *Executor) { e.headed = b }
 }
 
+// WithAutoHeaded enables auto-escalation: start headless, but if an action
+// marked headed:true fails, relaunch in headed mode and retry.
+func WithAutoHeaded(b bool) Option {
+	return func(e *Executor) { e.autoHeaded = b }
+}
+
 // WithDebug enables verbose logging and failure screenshots.
 func WithDebug(b bool) Option {
 	return func(e *Executor) { e.debug = b }
