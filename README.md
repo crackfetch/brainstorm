@@ -455,7 +455,8 @@ brz reads environment variables from two locations (earlier values take preceden
 
 | Variable | Description |
 |----------|-------------|
-| `BRZ_HEADED=1` | Show browser window (equivalent to `--headed`) |
+| `BRZ_HEADED=1` | Always show browser window (equivalent to `--headed`) |
+| `BRZ_HEADED=auto` | Start headless, escalate to headed when an action marked `headed: true` fails |
 | `BRZ_DEBUG=1` | Verbose logging + failure screenshots (equivalent to `--debug`) |
 | `BRZ_PROFILE_DIR` | Chrome profile path (default: `~/.config/brz/chrome-profile`) |
 
@@ -464,6 +465,7 @@ brz reads environment variables from two locations (earlier values take preceden
 By default, brz reuses a Chrome profile at `~/.config/brz/chrome-profile/`. Login cookies and sessions survive between invocations. This means:
 
 - Log in once with `--headed`, then run headless forever
+- Use `BRZ_HEADED=auto` to let brz start headless and pop up a window only when it needs help (e.g., expired cookies on a `headed: true` action)
 - Chain multiple `brz run` calls without re-authenticating
 - `brz inspect` a page that requires login (cookies carry over from a prior `brz run`)
 - Use `--ephemeral` for a clean session with no stored cookies

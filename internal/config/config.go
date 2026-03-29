@@ -9,7 +9,7 @@ import (
 
 // Config holds generic browser automation settings.
 type Config struct {
-	Headed     bool   // show browser window
+	Headed     string // "1" = always headed, "auto" = per-action, "" = headless
 	Debug      bool   // verbose logging + failure screenshots
 	ProfileDir string // chrome profile path
 }
@@ -34,7 +34,7 @@ func Load() *Config {
 	home, _ := os.UserHomeDir()
 
 	cfg := &Config{
-		Headed:     os.Getenv("BRZ_HEADED") == "1",
+		Headed:     os.Getenv("BRZ_HEADED"), // "1", "auto", or ""
 		Debug:      os.Getenv("BRZ_DEBUG") == "1",
 		ProfileDir: filepath.Join(home, ".config", "brz", "chrome-profile"),
 	}

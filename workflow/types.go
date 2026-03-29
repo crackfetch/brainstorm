@@ -11,8 +11,9 @@ type Workflow struct {
 
 // Action is a named sequence of steps with an optional starting URL.
 type Action struct {
-	URL   string `yaml:"url,omitempty"`
-	Steps []Step `yaml:"steps"`
+	URL    string `yaml:"url,omitempty"`
+	Headed bool   `yaml:"headed,omitempty"` // show browser window (used by BRZ_HEADED=auto)
+	Steps  []Step `yaml:"steps"`
 }
 
 // Step is a single browser operation. Exactly one field should be set.

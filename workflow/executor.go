@@ -5,7 +5,9 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/go-rod/rod"
@@ -24,6 +26,7 @@ type Executor struct {
 	page       *rod.Page
 	workflow   *Workflow
 	headed     bool
+	autoHeaded bool // start headless, escalate to headed on failure
 	profileDir string
 	debug      bool
 
@@ -70,6 +73,21 @@ func (e *Executor) Start() error {
 	}
 
 	controlURL, err := l.Launch()
+	if err != nil && e.profileDir != "" && strings.Contains(err.Error(), "SingletonLock") {
+		if e.removeStaleSingletonLock() {
+			// Stale lock removed — retry once with a fresh launcher.
+			l2 := launcher.New()
+			if path, exists := launcher.LookPath(); exists {
+				l2 = l2.Bin(path)
+			}
+			l2 = l2.UserDataDir(e.profileDir)
+			l2 = l2.Set("disable-blink-features", "AutomationControlled")
+			if e.headed {
+				l2 = l2.Headless(false)
+			}
+			controlURL, err = l2.Launch()
+		}
+	}
 	if err != nil {
 		return fmt.Errorf("launch browser: %w", err)
 	}
@@ -81,6 +99,51 @@ func (e *Executor) Start() error {
 
 	e.browser = browser
 	return nil
+}
+
+// removeStaleSingletonLock checks whether the SingletonLock in the profile
+// directory is held by a dead process. If so, it removes the lock file and
+// returns true. If a live process holds the lock, it returns false — we never
+// kill another process's Chrome.
+func (e *Executor) removeStaleSingletonLock() bool {
+	lockPath := filepath.Join(e.profileDir, "SingletonLock")
+
+	// SingletonLock is a symlink whose target encodes "hostname-pid".
+	target, err := os.Readlink(lockPath)
+	if err != nil {
+		// Not a symlink or doesn't exist — try removing anyway.
+		if os.Remove(lockPath) == nil {
+			log.Printf("Removed stale SingletonLock (unreadable link)")
+			return true
+		}
+		return false
+	}
+
+	// Parse PID from "hostname-pid" format.
+	parts := strings.SplitN(target, "-", 2)
+	if len(parts) == 2 {
+		if pid, err := strconv.Atoi(parts[1]); err == nil {
+			// Signal 0 checks if the process exists without killing it.
+			proc, err := os.FindProcess(pid)
+			if err == nil && proc.Signal(syscall.Signal(0)) == nil {
+				// Process is alive — do not remove.
+				return false
+			}
+		}
+	}
+
+	if err := os.Remove(lockPath); err != nil {
+		return false
+	}
+	log.Printf("Removed stale SingletonLock (owner process is dead)")
+	return true
+}
+
+// restart shuts down the current browser and relaunches with a new headed mode.
+func (e *Executor) restart(headed bool) error {
+	e.Close()
+	e.headed = headed
+	return e.Start()
 }
 
 // Close shuts down the browser.
@@ -156,10 +219,75 @@ func (e *Executor) RunAction(name string) *ActionResult {
 		page.MustWaitLoad()
 	}
 
-	// Execute steps.
-	// Pre-scan: if a click step is immediately followed by a download step,
-	// we must register WaitDownload BEFORE the click fires. Rod requires the
-	// wait to be set up before the browser event occurs.
+	// Execute steps. runSteps returns nil on success, *ActionResult on failure.
+	escalated := false
+	if failResult := e.runSteps(name, action); failResult != nil {
+		// Auto-escalation: if we failed headless on an action that wants headed
+		// mode, relaunch the browser headed and retry all steps from scratch.
+		if e.autoHeaded && action.Headed && !e.headed {
+			log.Printf("[%s] headless attempt failed — escalating to headed mode", name)
+			if err := e.restart(true); err != nil {
+				failResult.Error += fmt.Sprintf("; headed escalation failed: %v", err)
+				failResult.DurationMs = time.Since(start).Milliseconds()
+				return failResult
+			}
+			// Set up a fresh page for the headed retry.
+			retryPage, err := e.browser.Page(proto.TargetCreateTarget{URL: "about:blank"})
+			if err != nil {
+				failResult.Error += fmt.Sprintf("; headed page create failed: %v", err)
+				failResult.DurationMs = time.Since(start).Milliseconds()
+				return failResult
+			}
+			e.page = retryPage
+			e.injectStealth()
+			retryPage.MustSetUserAgent(&proto.NetworkSetUserAgentOverride{
+				UserAgent: defaultUserAgent,
+			})
+			if action.URL != "" {
+				url := InterpolateEnv(action.URL, e.workflow.Env)
+				if err := retryPage.Navigate(url); err != nil {
+					failResult.Error += fmt.Sprintf("; headed navigate failed: %v", err)
+					failResult.DurationMs = time.Since(start).Milliseconds()
+					return failResult
+				}
+				retryPage.MustWaitLoad()
+			}
+			// Retry all steps in headed mode.
+			if retryResult := e.runSteps(name, action); retryResult != nil {
+				retryResult.Escalated = true
+				retryResult.DurationMs = time.Since(start).Milliseconds()
+				return retryResult
+			}
+			escalated = true
+		} else {
+			failResult.DurationMs = time.Since(start).Milliseconds()
+			return failResult
+		}
+	}
+
+	// Build success result.
+	result := &ActionResult{
+		OK:         true,
+		Action:     name,
+		Steps:      len(action.Steps),
+		DurationMs: time.Since(start).Milliseconds(),
+		Escalated:  escalated,
+	}
+
+	// Attach download info if a file was downloaded during this action.
+	if e.LastDownload != "" {
+		result.Download = e.LastDownload
+		if info, err := os.Stat(e.LastDownload); err == nil {
+			result.DownloadSize = info.Size()
+		}
+	}
+
+	return result
+}
+
+// runSteps executes the steps of an action. Returns nil on success,
+// or an *ActionResult describing the failure.
+func (e *Executor) runSteps(name string, action Action) *ActionResult {
 	for i, step := range action.Steps {
 		label := step.Label
 		if label == "" {
@@ -187,36 +315,24 @@ func (e *Executor) RunAction(name string) *ActionResult {
 		if err := e.executeStep(step); err != nil {
 			screenshotPath := fmt.Sprintf("%s_failed_%s_%d.png", name, time.Now().Format("20060102-150405"), i)
 			e.takeScreenshot(screenshotPath)
-			return &ActionResult{
+
+			result := &ActionResult{
 				OK:         false,
 				Action:     name,
 				Steps:      i,
-				DurationMs: time.Since(start).Milliseconds(),
 				Error:      fmt.Sprintf("action %q, %s: %v", name, label, err),
 				FailedStep: i + 1,
 				StepType:   stepType(step),
 				Screenshot: filepath.Join(os.TempDir(), screenshotPath),
 			}
+
+			// Capture page state for debugging.
+			result.PageURL, result.PageHTML = e.capturePageState()
+
+			return result
 		}
 	}
-
-	// Build success result
-	result := &ActionResult{
-		OK:         true,
-		Action:     name,
-		Steps:      len(action.Steps),
-		DurationMs: time.Since(start).Milliseconds(),
-	}
-
-	// Attach download info if a file was downloaded during this action
-	if e.LastDownload != "" {
-		result.Download = e.LastDownload
-		if info, err := os.Stat(e.LastDownload); err == nil {
-			result.DownloadSize = info.Size()
-		}
-	}
-
-	return result
+	return nil
 }
 
 // stepType returns the type name of a step for error reporting.
@@ -469,6 +585,32 @@ func (e *Executor) takeScreenshot(name string) {
 	if e.debug {
 		log.Printf("screenshot saved: %s", path)
 	}
+}
+
+// capturePageState returns the current page URL and HTML for debugging.
+func (e *Executor) capturePageState() (pageURL, pageHTML string) {
+	if e.page == nil {
+		return "", ""
+	}
+	if info, err := e.page.Info(); err == nil {
+		pageURL = info.URL
+	}
+	if html, err := e.page.HTML(); err == nil {
+		pageHTML = html
+	}
+	return
+}
+
+// WaitOnFailure keeps the browser open for inspection when headed and an
+// action failed. Call this from the CLI layer after RunAction returns a failure.
+// Waits for the user to press Enter in the terminal, then returns.
+func (e *Executor) WaitOnFailure() {
+	if !e.headed || e.page == nil {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "\nBrowser kept open for debugging. Press Enter to close...\n")
+	buf := make([]byte, 1)
+	os.Stdin.Read(buf)
 }
 
 // Page returns the current page for advanced usage.
