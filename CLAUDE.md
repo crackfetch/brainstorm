@@ -40,7 +40,7 @@ workflow/                  Public package — importable by other Go programs
   executor.go              NewExecutor(), Start(), NavigateTo(), RunAction()
   result.go                ActionResult struct (JSON-serializable)
   inspect.go               InspectResult, ElementInfo, InspectJS (embedded JS extractor)
-  options.go               Functional options: WithHeaded, WithDebug, WithProfileDir
+  options.go               Functional options: WithHeaded, WithAutoHeaded, WithDebug, WithProfileDir
 workflows/examples/        Example workflow definitions (YAML)
 docs/                      Architecture, getting started, workflow YAML spec
 ```
@@ -50,7 +50,8 @@ docs/                      Architecture, getting started, workflow YAML spec
 - **Discovery-first**: inspect/screenshot/eval commands let LLMs explore pages before writing workflows.
 - **Workflow-driven**: All browser automation is defined in YAML. No site-specific code in the binary.
 - **LLM-friendly**: JSON output when piped, semantic exit codes (0/1/2/3), rich --help with schemas.
-- **Session persistence**: Reuses Chrome profile between invocations. Login cookies survive across all commands.
+- **Session persistence**: Reuses Chrome profile between invocations. Login cookies survive across all commands. Stale SingletonLock files are auto-recovered.
+- **Auto-headed**: `BRZ_HEADED=auto` starts headless, escalates to headed when actions marked `headed: true` fail (e.g., expired cookies). On failure, captures page HTML/URL in result and keeps browser open in headed mode.
 - **System Chrome first**: Uses existing Chrome installation. Falls back to auto-download.
 - **Stealth**: Masks navigator.webdriver, disables AutomationControlled, real User-Agent.
 - **Public Go API**: `workflow/` package is importable. `hoard-agent` uses it as a library.

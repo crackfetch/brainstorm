@@ -13,6 +13,7 @@ env:                # Optional. Default environment variables.
 actions:            # Required. Named actions the agent can execute.
   action_name:
     url: string     # Optional. Navigate here before running steps.
+    headed: bool    # Optional. When BRZ_HEADED=auto, run this action headed if headless fails.
     steps: []       # Required. Ordered list of steps to execute.
 ```
 
