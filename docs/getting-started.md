@@ -151,6 +151,27 @@ brz run my-workflow.yaml login --headed
 brz inspect https://example.com --headed
 ```
 
+### Auto-headed mode
+
+Set `BRZ_HEADED=auto` to let brz start headless and automatically pop up a browser window when it needs help. Mark actions that might require user interaction with `headed: true` in your YAML:
+
+```yaml
+actions:
+  login:
+    headed: true   # auto mode will escalate to headed if headless fails
+    url: https://example.com/login
+    steps:
+      - fill: { selector: '#email', value: '${EMAIL}' }
+      - click: { selector: '#submit' }
+  export:
+    url: https://example.com/export
+    steps:
+      - click: { selector: '#export-btn' }
+      - download: { timeout: '60s' }
+```
+
+When cookies are valid, `login` runs silently in headless mode. When cookies expire and the action fails, brz restarts the browser in headed mode and retries.
+
 ### Debug mode
 
 Enables verbose logging and saves screenshots on failure:
@@ -227,7 +248,8 @@ brz saves browser data (cookies, sessions) to `~/.config/brz/chrome-profile/`. T
 - Login sessions persist between runs and across all commands
 - `brz run` login once, then `brz inspect` authenticated pages
 - You don't need to re-authenticate every time
-- First run may require `--headed` for initial login/CAPTCHA
+- First run may require `--headed` for initial login/CAPTCHA, or use `BRZ_HEADED=auto` to let brz decide
+- If Chrome previously crashed, brz auto-recovers stale lock files
 - Use `--ephemeral` for a clean session
 
 ## The Full LLM Agent Loop

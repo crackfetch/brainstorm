@@ -79,16 +79,17 @@ The core engine. Six files:
 | `executor.go` | Browser lifecycle (Start, Close), page management (NavigateTo, RunAction), stealth |
 | `result.go` | ActionResult struct returned by RunAction |
 | `inspect.go` | InspectResult/ElementInfo types, InspectJS (embedded DOM extraction JavaScript) |
-| `options.go` | Functional options: WithHeaded, WithDebug, WithProfileDir |
+| `options.go` | Functional options: WithHeaded, WithAutoHeaded, WithDebug, WithProfileDir |
 
 **Key Executor methods:**
 
 | Method | Used by | Purpose |
 |--------|---------|---------|
-| `Start()` | All commands | Launch browser with stealth settings |
+| `Start()` | All commands | Launch browser with stealth settings, auto-recover stale SingletonLock |
 | `Close()` | All commands | Shut down browser |
 | `NavigateTo(url)` | inspect, screenshot, eval | Create page, inject stealth, navigate |
-| `RunAction(name)` | run | Execute a named workflow action, return ActionResult |
+| `RunAction(name)` | run | Execute a named workflow action, auto-escalate to headed if needed |
+| `WaitOnFailure()` | run | Keep browser open on failure in headed mode for debugging |
 | `SetEnv(key, val)` | run | Inject env vars for `${VAR}` interpolation |
 | `Page()` | inspect, eval | Access the underlying rod page for direct operations |
 
@@ -106,7 +107,7 @@ Loads environment variables from:
 1. `~/.config/brz/agent.env` (stable location)
 2. `.env` in working directory (local override)
 
-Three config values: `BRZ_HEADED`, `BRZ_DEBUG`, `BRZ_PROFILE_DIR`.
+Three config values: `BRZ_HEADED` (`"1"`, `"auto"`, or empty), `BRZ_DEBUG`, `BRZ_PROFILE_DIR`.
 
 ### `cmd/brz/`
 
@@ -135,7 +136,7 @@ brz uses [rod](https://github.com/go-rod/rod), a Go library for the Chrome DevTo
 
 ## Session Persistence
 
-All commands share the same Chrome profile at `~/.config/brz/chrome-profile/`. This means:
+All commands share the same Chrome profile at `~/.config/brz/chrome-profile/`. If Chrome previously crashed, brz auto-recovers by detecting and removing stale `SingletonLock` files (checks if the owning PID is dead via signal 0). This means:
 
 1. `brz run site.yaml login --headed` (log in with visible browser, solve CAPTCHA)
 2. `brz inspect https://site.com/dashboard` (uses cookies from step 1)

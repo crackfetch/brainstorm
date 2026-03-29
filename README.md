@@ -231,9 +231,13 @@ brz run my-workflow.yaml export | jq -r .download
   "error": "find element \"#submit\": timeout",
   "failed_step": 2,
   "step_type": "click",
-  "screenshot": "/tmp/login_failed_20260328-143022_1.png"
+  "screenshot": "/tmp/login_failed_20260328-143022_1.png",
+  "page_url": "https://example.com/login",
+  "page_html": "<html>...</html>"
 }
 ```
+
+On failure, `page_url` and `page_html` capture the page state at the moment the step failed, so agents can debug without re-running. If the action was auto-escalated from headless to headed (via `BRZ_HEADED=auto`), the result includes `"escalated": true`.
 
 ### Available Steps
 
@@ -570,6 +574,7 @@ exec.RunAction(name string) *ActionResult
 
 // Configuration
 workflow.WithHeaded(bool) Option
+workflow.WithAutoHeaded(bool) Option    // start headless, escalate on failure
 workflow.WithDebug(bool) Option
 workflow.WithProfileDir(string) Option
 
@@ -580,9 +585,10 @@ exec.SetEnv(key, value string)
 exec.Page() *rod.Page
 exec.IsHeaded() bool
 exec.KeyPress(key input.Key) error
+exec.WaitOnFailure()            // keep browser open in headed mode for debugging
 
 // Result types
-workflow.ActionResult   // ok, action, steps, duration_ms, download, error, ...
+workflow.ActionResult   // ok, action, steps, duration_ms, download, error, page_html, page_url, escalated, ...
 workflow.InspectResult  // ok, url, title, elements, total, truncated, ...
 workflow.ElementInfo    // selector, tag, type, name, text, href, hidden, ...
 ```
