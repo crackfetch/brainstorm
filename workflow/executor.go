@@ -313,6 +313,11 @@ func (e *Executor) runSteps(name string, action Action) *ActionResult {
 		}
 
 		if err := e.executeStep(step); err != nil {
+			if step.Optional {
+				log.Printf("[%s] optional step %d failed (non-fatal): %v", name, i+1, err)
+				continue
+			}
+
 			screenshotPath := fmt.Sprintf("%s_failed_%s_%d.png", name, time.Now().Format("20060102-150405"), i)
 			e.takeScreenshot(screenshotPath)
 

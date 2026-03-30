@@ -38,7 +38,8 @@ type Step struct {
 	Eval       string     `yaml:"eval,omitempty"`
 
 	// Control flow
-	Label string `yaml:"label,omitempty"` // human-readable step description for logging
+	Label    string `yaml:"label,omitempty"`    // human-readable step description for logging
+	Optional bool   `yaml:"optional,omitempty"` // if true, step failure is non-fatal
 }
 
 type ClickStep struct {
