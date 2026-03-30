@@ -146,6 +146,27 @@ func TestEvalDownloadHasColumns(t *testing.T) {
 	}
 }
 
+func TestEvalTextVisible_NoPage(t *testing.T) {
+	exec := &Executor{}
+	if err := exec.evalTextVisible(EvalAssert{TextVisible: "hello"}); err == nil {
+		t.Error("expected fail with no page")
+	}
+}
+
+func TestEvalNoText_NoPage(t *testing.T) {
+	exec := &Executor{}
+	if err := exec.evalNoText(EvalAssert{NoText: "error"}); err == nil {
+		t.Error("expected fail with no page")
+	}
+}
+
+func TestEvalSelector_NoPage(t *testing.T) {
+	exec := &Executor{}
+	if err := exec.evalSelector(EvalAssert{Selector: "#btn"}); err == nil {
+		t.Error("expected fail with no page")
+	}
+}
+
 func TestEvalURLContains_NoPage(t *testing.T) {
 	exec := &Executor{}
 	if err := exec.evalURLContains("example"); err == nil {
