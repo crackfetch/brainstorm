@@ -33,6 +33,23 @@ func Load(path string) (*Workflow, error) {
 	return &w, nil
 }
 
+// LoadFromBytes parses workflow YAML from a byte slice.
+func LoadFromBytes(data []byte) (*Workflow, error) {
+	var w Workflow
+	if err := yaml.Unmarshal(data, &w); err != nil {
+		return nil, fmt.Errorf("parse workflow: %w", err)
+	}
+
+	if w.Name == "" {
+		return nil, fmt.Errorf("workflow: missing 'name' field")
+	}
+	if len(w.Actions) == 0 {
+		return nil, fmt.Errorf("workflow: no actions defined")
+	}
+
+	return &w, nil
+}
+
 // InterpolateEnv replaces ${VAR_NAME} patterns with environment variable values.
 // Checks the workflow's env map first, then os.Getenv.
 func InterpolateEnv(s string, workflowEnv map[string]string) string {

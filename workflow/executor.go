@@ -282,6 +282,18 @@ func (e *Executor) RunAction(name string) *ActionResult {
 		}
 	}
 
+	// Run post-action eval assertions.
+	if evalResult := e.runEvals(name, action); evalResult != nil {
+		result.EvalsPassed = evalResult.Passed
+		result.EvalsFailed = evalResult.Failed
+		result.EvalErrors = evalResult.Errors
+		if evalResult.Failed > 0 {
+			result.OK = false
+			result.Error = fmt.Sprintf("%d of %d eval assertions failed", evalResult.Failed, evalResult.Passed+evalResult.Failed)
+			result.PageURL, result.PageHTML = e.capturePageState()
+		}
+	}
+
 	return result
 }
 

@@ -11,9 +11,29 @@ type Workflow struct {
 
 // Action is a named sequence of steps with an optional starting URL.
 type Action struct {
-	URL    string `yaml:"url,omitempty"`
-	Headed bool   `yaml:"headed,omitempty"` // show browser window (used by BRZ_HEADED=auto)
-	Steps  []Step `yaml:"steps"`
+	URL    string       `yaml:"url,omitempty"`
+	Headed bool         `yaml:"headed,omitempty"` // show browser window (used by BRZ_HEADED=auto)
+	Steps  []Step       `yaml:"steps"`
+	Eval   []EvalAssert `yaml:"eval,omitempty"` // post-action assertions
+}
+
+// EvalAssert is a single post-action assertion. Exactly one field should be set.
+type EvalAssert struct {
+	// Page state
+	JS          string `yaml:"js,omitempty"`           // JS expression that must return truthy
+	URLContains string `yaml:"url_contains,omitempty"` // current URL must contain this string
+	TextVisible string `yaml:"text_visible,omitempty"` // text must be visible on page
+	NoText      string `yaml:"no_text,omitempty"`      // text must NOT be visible on page
+	Selector    string `yaml:"selector,omitempty"`      // element must exist on page
+	Timeout     string `yaml:"timeout,omitempty"`       // timeout for page-state checks (default "5s")
+
+	// Download state
+	DownloadMinSize    int64    `yaml:"download_min_size,omitempty"`    // downloaded file must be at least N bytes
+	DownloadMinRows    int      `yaml:"download_min_rows,omitempty"`   // CSV must have at least N data rows (excluding header)
+	DownloadHasColumns []string `yaml:"download_has_columns,omitempty"` // CSV header must contain these columns
+
+	// Metadata
+	Label string `yaml:"label,omitempty"` // human-readable description for logging/errors
 }
 
 // Step is a single browser operation. Exactly one field should be set.
