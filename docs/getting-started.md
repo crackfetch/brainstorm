@@ -189,6 +189,25 @@ brz run my-workflow.yaml export --json
 brz inspect https://example.com --json
 ```
 
+## Optional Steps
+
+Mark a step as `optional: true` to continue execution even if it fails. This is useful for elements that may not always be present, like a "Remember Me" checkbox or a dismissible banner.
+
+```yaml
+actions:
+  login:
+    url: https://example.com/login
+    steps:
+      - fill: { selector: 'input[name="Email"]', value: '${EMAIL}' }
+      - fill: { selector: 'input[name="Password"]', value: '${PASSWORD}' }
+      - label: "Check Remember Me"
+        click: { selector: '#RememberMe', timeout: '3s' }
+        optional: true
+      - click: { selector: 'button', text: 'Sign In' }
+```
+
+If the "Remember Me" checkbox doesn't exist, the step is skipped with a log message and "Sign In" is still clicked. The action result remains `ok: true` as long as all non-optional steps succeed.
+
 ## Using Environment Variables
 
 Keep credentials out of your workflow files:
