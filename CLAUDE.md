@@ -35,13 +35,15 @@ cmd/brz/                   CLI entry point: subcommands, flags, JSON/TTY output
                            Shared browserSetup helper for all browser commands
 internal/config/           ENV loading from ~/.config/brz/agent.env + .env
 workflow/                  Public package — importable by other Go programs
-  types.go                 Workflow/Action/Step structs (YAML schema)
-  loader.go                Load() + InterpolateEnv()
+  types.go                 Workflow/Action/Step/EvalAssert structs (YAML schema)
+  loader.go                Load(), LoadFromBytes(), InterpolateEnv()
   executor.go              NewExecutor(), Start(), NavigateTo(), RunAction()
-  result.go                ActionResult struct (JSON-serializable)
+  eval.go                  Post-action eval assertions (JS, URL, text, selector, download checks)
+  result.go                ActionResult struct (JSON-serializable, includes eval results)
   inspect.go               InspectResult, ElementInfo, InspectJS (embedded JS extractor)
   options.go               Functional options: WithHeaded, WithAutoHeaded, WithDebug, WithProfileDir
 workflows/examples/        Example workflow definitions (YAML)
+prompts/                   LLM agent prompt (agent.md — universal, works with any LLM)
 docs/                      Architecture, getting started, workflow YAML spec
 ```
 
@@ -70,5 +72,5 @@ docs/                      Architecture, getting started, workflow YAML spec
 
 ## Testing
 
-- `workflow/` — unit tests for YAML parsing, env interpolation, timeout parsing
+- `workflow/` — unit tests for YAML parsing, env interpolation, timeout parsing, eval assertions
 - Browser E2E — manual only (`brz inspect https://example.com --headed`)

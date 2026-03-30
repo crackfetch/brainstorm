@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -130,7 +131,7 @@ func (e *Executor) evalTextVisible(assert EvalAssert) error {
 		return fmt.Errorf("[unreachable] no page available")
 	}
 	timeout := evalTimeout(assert)
-	_, err := e.page.Timeout(timeout).ElementR("*", assert.TextVisible)
+	_, err := e.page.Timeout(timeout).ElementR("*", regexp.QuoteMeta(assert.TextVisible))
 	if err != nil {
 		return fmt.Errorf("[failed] text %q not found on page", assert.TextVisible)
 	}
@@ -147,8 +148,12 @@ func (e *Executor) evalNoText(assert EvalAssert) error {
 	if assert.Timeout != "" {
 		timeout = ParseTimeout(assert.Timeout)
 	}
-	el, err := e.page.Timeout(timeout).ElementR("*", assert.NoText)
-	if err == nil && el != nil {
+	el, err := e.page.Timeout(timeout).ElementR("*", regexp.QuoteMeta(assert.NoText))
+	if err != nil {
+		// Timeout or not-found means the text is absent — that's a pass.
+		return nil
+	}
+	if el != nil {
 		return fmt.Errorf("[failed] text %q should not be on page but was found", assert.NoText)
 	}
 	return nil
