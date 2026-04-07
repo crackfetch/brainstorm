@@ -17,6 +17,7 @@
 - `brz run <workflow.yaml> <action>`: Execute a named workflow action. Returns structured result with download paths.
 - `brz validate <workflow.yaml>`: Check workflow YAML syntax.
 - `brz actions <workflow.yaml>`: List available actions in a workflow.
+- `brz prompt`: Print the full LLM agent prompt. Paste into your system prompt to teach any LLM how to use brz.
 
 ## Key Features
 

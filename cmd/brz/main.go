@@ -10,9 +10,15 @@ import (
 	"time"
 
 	"github.com/crackfetch/brainstorm/internal/config"
+	"github.com/crackfetch/brainstorm/prompts"
 	"github.com/crackfetch/brainstorm/workflow"
 	"golang.org/x/term"
 )
+
+// promptContent returns the embedded agent prompt.
+func promptContent() string {
+	return prompts.AgentPrompt
+}
 
 // Version is set at build time via ldflags.
 var Version = "dev"
@@ -54,6 +60,8 @@ func main() {
 		cmdValidate(os.Args[2:])
 	case "actions":
 		cmdActions(os.Args[2:])
+	case "prompt":
+		cmdPrompt()
 	case "version":
 		fmt.Println(Version)
 	case "help", "--help", "-h":
@@ -66,8 +74,12 @@ func main() {
 }
 
 // ---------------------------------------------------------------------------
-// brz run
+// brz prompt
 // ---------------------------------------------------------------------------
+
+func cmdPrompt() {
+	fmt.Print(promptContent())
+}
 
 // ---------------------------------------------------------------------------
 // Shared browser setup
@@ -570,6 +582,7 @@ Commands:
   eval       Execute JavaScript on a page and return the result
   validate   Parse a workflow file and report errors or summary stats
   actions    List all actions defined in a workflow with step counts
+  prompt     Print the LLM agent prompt (teaches an AI how to use brz)
   version    Print the brz version string
   help       Show this help text
 
