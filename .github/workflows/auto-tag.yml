@@ -1,0 +1,64 @@
+name: Auto Tag
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    # Skip merge commits from PRs that are just docs/test/chore
+    if: "!contains(github.event.head_commit.message, '[skip release]')"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine version bump
+        id: bump
+        run: |
+          # Get the latest tag
+          LATEST=$(git tag --sort=-v:refname | head -1)
+          if [ -z "$LATEST" ]; then
+            echo "version=v0.1.0" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Strip the v prefix and split
+          VER="${LATEST#v}"
+          MAJOR=$(echo "$VER" | cut -d. -f1)
+          MINOR=$(echo "$VER" | cut -d. -f2)
+          PATCH=$(echo "$VER" | cut -d. -f3)
+
+          # Read commit messages since last tag
+          COMMITS=$(git log "$LATEST"..HEAD --oneline)
+
+          # Determine bump type from conventional commit prefixes
+          if echo "$COMMITS" | grep -qiE '^[a-f0-9]+ (feat!|BREAKING CHANGE)'; then
+            MAJOR=$((MAJOR + 1))
+            MINOR=0
+            PATCH=0
+          elif echo "$COMMITS" | grep -qiE '^[a-f0-9]+ feat'; then
+            MINOR=$((MINOR + 1))
+            PATCH=0
+          elif echo "$COMMITS" | grep -qiE '^[a-f0-9]+ fix'; then
+            PATCH=$((PATCH + 1))
+          else
+            echo "No feat/fix commits since $LATEST — skipping release"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "version=v${MAJOR}.${MINOR}.${PATCH}" >> "$GITHUB_OUTPUT"
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Create and push tag
+        if: steps.bump.outputs.skip != 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ steps.bump.outputs.version }}" -m "Release ${{ steps.bump.outputs.version }}"
+          git push origin "${{ steps.bump.outputs.version }}"
