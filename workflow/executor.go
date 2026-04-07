@@ -34,6 +34,8 @@ type Executor struct {
 	LastDownload string
 	// LastResult holds the string result of the most recent action (e.g. downloaded CSV content).
 	LastResult string
+	// LastStatusCode holds the HTTP status code from the most recent navigation.
+	LastStatusCode int
 
 	// pendingDownloadWait holds a WaitDownload callback registered before a click
 	// that triggers a download. This solves the sequencing issue where rod requires
@@ -169,6 +171,7 @@ func (e *Executor) NavigateTo(url string) error {
 		return fmt.Errorf("navigate to %s: %w", url, err)
 	}
 	page.MustWaitLoad()
+	e.captureStatusCode()
 	return nil
 }
 
@@ -217,6 +220,7 @@ func (e *Executor) RunAction(name string) *ActionResult {
 			}
 		}
 		page.MustWaitLoad()
+		e.captureStatusCode()
 	}
 
 	// Execute steps. runSteps returns nil on success, *ActionResult on failure.
@@ -272,6 +276,7 @@ func (e *Executor) RunAction(name string) *ActionResult {
 		Steps:      len(action.Steps),
 		DurationMs: time.Since(start).Milliseconds(),
 		Escalated:  escalated,
+		StatusCode: e.LastStatusCode,
 	}
 
 	// Attach download info if a file was downloaded during this action.
@@ -390,6 +395,7 @@ func (e *Executor) executeStep(step Step) error {
 			return fmt.Errorf("navigate: %w", err)
 		}
 		e.page.MustWaitLoad()
+		e.captureStatusCode()
 
 	case step.Click != nil:
 		return e.doClick(step.Click)
@@ -605,6 +611,25 @@ func (e *Executor) takeScreenshot(name string) {
 }
 
 // capturePageState returns the current page URL and HTML for debugging.
+// captureStatusCode reads the HTTP status code of the most recent navigation
+// using the Navigation Timing API. Works in Chrome 109+. Falls back to 0
+// if the API is unavailable or the page hasn't navigated.
+func (e *Executor) captureStatusCode() {
+	if e.page == nil {
+		return
+	}
+	res, err := e.page.Eval(`() => {
+		const nav = performance.getEntriesByType('navigation');
+		return nav.length > 0 ? nav[0].responseStatus : 0;
+	}`)
+	if err != nil {
+		return
+	}
+	if code := res.Value.Int(); code > 0 {
+		e.LastStatusCode = code
+	}
+}
+
 func (e *Executor) capturePageState() (pageURL, pageHTML string) {
 	if e.page == nil {
 		return "", ""

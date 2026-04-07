@@ -80,6 +80,9 @@ func (e *Executor) runOneEval(assert EvalAssert) error {
 	case assert.Selector != "":
 		return e.evalSelector(assert)
 
+	case assert.StatusCode > 0:
+		return e.evalStatusCode(assert.StatusCode)
+
 	case assert.DownloadMinSize > 0:
 		return e.evalDownloadMinSize(assert.DownloadMinSize)
 
@@ -172,6 +175,17 @@ func (e *Executor) evalSelector(assert EvalAssert) error {
 	return nil
 }
 
+// evalStatusCode checks that the last navigation returned the expected HTTP status code.
+func (e *Executor) evalStatusCode(expected int) error {
+	if e.LastStatusCode == 0 {
+		return fmt.Errorf("[unreachable] no HTTP status code captured")
+	}
+	if e.LastStatusCode != expected {
+		return fmt.Errorf("[failed] HTTP status %d, expected %d", e.LastStatusCode, expected)
+	}
+	return nil
+}
+
 // evalDownloadMinSize checks that the last downloaded file is at least N bytes.
 func (e *Executor) evalDownloadMinSize(minBytes int64) error {
 	if e.LastDownload == "" {
@@ -192,6 +206,9 @@ func (e *Executor) evalDownloadMinSize(minBytes int64) error {
 func (e *Executor) evalDownloadMinRows(minRows int) error {
 	if e.LastDownload == "" {
 		return fmt.Errorf("[unreachable] no file was downloaded")
+	}
+	if minRows <= 0 {
+		return nil
 	}
 	f, err := os.Open(e.LastDownload)
 	if err != nil {
@@ -243,8 +260,13 @@ func (e *Executor) evalDownloadHasColumns(columns []string) error {
 	}
 
 	headerSet := make(map[string]bool, len(header))
-	for _, col := range header {
-		headerSet[strings.TrimSpace(col)] = true
+	for i, col := range header {
+		col = strings.TrimSpace(col)
+		// Strip UTF-8 BOM from first column (Windows Excel adds this)
+		if i == 0 {
+			col = strings.TrimPrefix(col, "\xef\xbb\xbf")
+		}
+		headerSet[col] = true
 	}
 
 	var missing []string

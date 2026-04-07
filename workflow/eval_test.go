@@ -3,6 +3,7 @@ package workflow
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -122,6 +123,36 @@ func TestEvalDownloadMinRows(t *testing.T) {
 	}
 }
 
+func TestEvalDownloadMinRows_BOM(t *testing.T) {
+	// BOM CSV should still count rows correctly.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "bom.csv")
+	os.WriteFile(path, []byte("\xef\xbb\xbfName,Price\nWidget,9.99\n"), 0644)
+
+	exec := &Executor{LastDownload: path}
+	if err := exec.evalDownloadMinRows(1); err != nil {
+		t.Errorf("BOM CSV: expected pass for min_rows=1, got: %v", err)
+	}
+}
+
+func TestEvalDownloadMinRows_HeaderOnly(t *testing.T) {
+	// A CSV with a header but zero data rows should fail min_rows=1.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "empty.csv")
+	os.WriteFile(path, []byte("Name,Price\n"), 0644)
+
+	exec := &Executor{LastDownload: path}
+
+	if err := exec.evalDownloadMinRows(1); err == nil {
+		t.Error("expected fail for header-only CSV with min_rows=1")
+	}
+
+	// min_rows=0 would be meaningless but shouldn't panic
+	if err := exec.evalDownloadMinRows(0); err != nil {
+		t.Errorf("expected pass for min_rows=0, got: %v", err)
+	}
+}
+
 func TestEvalDownloadHasColumns(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.csv")
@@ -146,38 +177,75 @@ func TestEvalDownloadHasColumns(t *testing.T) {
 	}
 }
 
-func TestEvalTextVisible_NoPage(t *testing.T) {
-	exec := &Executor{}
-	if err := exec.evalTextVisible(EvalAssert{TextVisible: "hello"}); err == nil {
-		t.Error("expected fail with no page")
+func TestEvalDownloadHasColumns_BOM(t *testing.T) {
+	// Windows Excel prepends a UTF-8 BOM (\xef\xbb\xbf) to CSV files.
+	// evalDownloadHasColumns should still match the first column name.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "bom.csv")
+	os.WriteFile(path, []byte("\xef\xbb\xbfProduct Name,Price,Quantity\nWidget,9.99,5\n"), 0644)
+
+	exec := &Executor{LastDownload: path}
+
+	if err := exec.evalDownloadHasColumns([]string{"Product Name", "Price"}); err != nil {
+		t.Errorf("BOM CSV: expected pass, got: %v", err)
 	}
 }
 
-func TestEvalNoText_NoPage(t *testing.T) {
-	exec := &Executor{}
-	if err := exec.evalNoText(EvalAssert{NoText: "error"}); err == nil {
-		t.Error("expected fail with no page")
+func TestEvalStatusCode(t *testing.T) {
+	exec := &Executor{LastStatusCode: 200}
+
+	// Should pass: 200 matches 200
+	if err := exec.runOneEval(EvalAssert{StatusCode: 200}); err != nil {
+		t.Errorf("expected pass for status 200, got: %v", err)
+	}
+
+	// Should fail: got 200, want 500
+	if err := exec.runOneEval(EvalAssert{StatusCode: 500}); err == nil {
+		t.Error("expected fail for status_code=500 when actual is 200")
+	}
+
+	// Should pass: 404 matches 404
+	exec.LastStatusCode = 404
+	if err := exec.runOneEval(EvalAssert{StatusCode: 404}); err != nil {
+		t.Errorf("expected pass for status 404, got: %v", err)
 	}
 }
 
-func TestEvalSelector_NoPage(t *testing.T) {
+func TestEvalStatusCode_NotCaptured(t *testing.T) {
+	// When no navigation happened (status code is 0), the eval should error
 	exec := &Executor{}
-	if err := exec.evalSelector(EvalAssert{Selector: "#btn"}); err == nil {
-		t.Error("expected fail with no page")
+	if err := exec.runOneEval(EvalAssert{StatusCode: 200}); err == nil {
+		t.Error("expected error when status code not captured")
 	}
 }
 
-func TestEvalURLContains_NoPage(t *testing.T) {
+func TestPageEvals_NoPage(t *testing.T) {
+	// All page-state evals should return an [unreachable] error when no browser
+	// is connected. This guards against nil-pointer panics in production when
+	// an eval runs after a browser crash or failed launch.
 	exec := &Executor{}
-	if err := exec.evalURLContains("example"); err == nil {
-		t.Error("expected fail with no page")
-	}
-}
 
-func TestEvalJS_NoPage(t *testing.T) {
-	exec := &Executor{}
-	if err := exec.evalJS(EvalAssert{JS: "true"}); err == nil {
-		t.Error("expected fail with no page")
+	cases := []struct {
+		name   string
+		assert EvalAssert
+	}{
+		{"js", EvalAssert{JS: "true"}},
+		{"url_contains", EvalAssert{URLContains: "example"}},
+		{"text_visible", EvalAssert{TextVisible: "hello"}},
+		{"no_text", EvalAssert{NoText: "error"}},
+		{"selector", EvalAssert{Selector: "#btn"}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := exec.runOneEval(tc.assert)
+			if err == nil {
+				t.Errorf("%s: expected error with no page, got nil", tc.name)
+			}
+			if !strings.Contains(err.Error(), "[unreachable]") {
+				t.Errorf("%s: expected [unreachable] prefix, got: %v", tc.name, err)
+			}
+		})
 	}
 }
 

@@ -27,6 +27,9 @@ type EvalAssert struct {
 	Selector    string `yaml:"selector,omitempty"`      // element must exist on page
 	Timeout     string `yaml:"timeout,omitempty"`       // timeout for page-state checks (default "5s")
 
+	// Response state
+	StatusCode int `yaml:"status_code,omitempty"` // HTTP status code must match (e.g. 200)
+
 	// Download state
 	DownloadMinSize    int64    `yaml:"download_min_size,omitempty"`    // downloaded file must be at least N bytes
 	DownloadMinRows    int      `yaml:"download_min_rows,omitempty"`   // CSV must have at least N data rows (excluding header)
