@@ -31,7 +31,7 @@ brz run workflows/examples/form-login.yaml login --headed --env EMAIL=test@examp
 
 ```
 cmd/brz/                   CLI entry point: subcommands, flags, JSON/TTY output
-  main.go                  7 commands: run, inspect, screenshot, eval, validate, actions, version
+  main.go                  8 commands: run, inspect, screenshot, eval, validate, actions, prompt, version
                            Shared browserSetup helper for all browser commands
 internal/config/           ENV loading from ~/.config/brz/agent.env + .env
 workflow/                  Public package — importable by other Go programs
@@ -43,7 +43,7 @@ workflow/                  Public package — importable by other Go programs
   inspect.go               InspectResult, ElementInfo, InspectJS (embedded JS extractor)
   options.go               Functional options: WithHeaded, WithAutoHeaded, WithDebug, WithProfileDir
 workflows/examples/        Example workflow definitions (YAML)
-prompts/                   LLM agent prompt (agent.md — universal, works with any LLM)
+prompts/                   LLM agent prompt (agent.md — embedded into binary via go:embed)
 docs/                      Architecture, getting started, workflow YAML spec
 ```
 
@@ -68,6 +68,7 @@ docs/                      Architecture, getting started, workflow YAML spec
 | `brz run <wf> <action>` | Workflow YAML | JSON: action result + download path |
 | `brz validate <wf>` | Workflow YAML | JSON: action/step counts |
 | `brz actions <wf>` | Workflow YAML | JSON: action list with URLs |
+| `brz prompt` | — | Markdown: full LLM agent prompt |
 | `brz version` | — | Version string |
 
 ## Testing

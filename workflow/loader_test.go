@@ -124,6 +124,30 @@ func TestInterpolateEnvWorkflowOverride(t *testing.T) {
 	}
 }
 
+func TestInterpolateEnvMultipleVars(t *testing.T) {
+	os.Setenv("TEST_HOST", "example.com")
+	os.Setenv("TEST_PORT", "8080")
+	defer os.Unsetenv("TEST_HOST")
+	defer os.Unsetenv("TEST_PORT")
+
+	result := InterpolateEnv("https://${TEST_HOST}:${TEST_PORT}/api", nil)
+	if result != "https://example.com:8080/api" {
+		t.Errorf("expected https://example.com:8080/api, got %s", result)
+	}
+}
+
+func TestInterpolateEnvMixedResolution(t *testing.T) {
+	// One var from workflow env, one from OS, one missing.
+	os.Setenv("TEST_FROM_OS", "os-val")
+	defer os.Unsetenv("TEST_FROM_OS")
+
+	wEnv := map[string]string{"FROM_WF": "wf-val"}
+	result := InterpolateEnv("${FROM_WF}-${TEST_FROM_OS}-${MISSING_XYZ}", wEnv)
+	if result != "wf-val-os-val-${MISSING_XYZ}" {
+		t.Errorf("expected wf-val-os-val-${MISSING_XYZ}, got %s", result)
+	}
+}
+
 func TestInterpolateEnvMissing(t *testing.T) {
 	result := InterpolateEnv("${NONEXISTENT_VAR_12345}", nil)
 	if result != "${NONEXISTENT_VAR_12345}" {

@@ -221,6 +221,44 @@ actions:
 brz run data-export.yaml export | jq -r .download
 ```
 
+## Eval Assertions
+
+Actions can include an `eval:` block that runs after all steps succeed. Evals verify the action produced the right result. If any eval fails, the action result has `ok: false` with details in `eval_errors`.
+
+```yaml
+actions:
+  export_inventory:
+    url: https://example.com/admin/pricing
+    steps:
+      - click: { selector: '#export-btn' }
+      - download: { timeout: '60s' }
+    eval:
+      - label: "Page loaded OK"
+        status_code: 200
+      - label: "CSV has data rows"
+        download_min_rows: 1
+      - label: "CSV has required columns"
+        download_has_columns: ["ID", "Name", "Price"]
+      - label: "Still on pricing page"
+        url_contains: "admin/pricing"
+```
+
+| Eval type | Syntax | What it checks |
+|-----------|--------|----------------|
+| js: | `js: "document.querySelector('.error') === null"` | JS expression returns truthy |
+| url_contains: | `url_contains: "admin/pricing"` | Current URL contains substring |
+| text_visible: | `text_visible: "Export complete"` | Text appears on page |
+| no_text: | `no_text: "error occurred"` | Text does NOT appear on page |
+| selector: | `selector: "#success-banner"` | Element exists in DOM |
+| status_code: | `status_code: 200` | HTTP status code of last navigation matches |
+| download_min_size: | `download_min_size: 50` | Downloaded file is at least N bytes |
+| download_min_rows: | `download_min_rows: 1` | Downloaded CSV has at least N data rows |
+| download_has_columns: | `download_has_columns: ["ID", "Name"]` | Downloaded CSV has these column headers |
+
+Each eval can include `label:` for logging and `timeout:` (default: 10s) for checks that need to wait.
+
+Evals are immutable verification. An agent can modify steps (selectors, timeouts) to fix a broken workflow, but must never modify eval assertions. If steps pass but evals fail, the action failed.
+
 ## The Agent Loop
 
 When automating a new site:

@@ -16,6 +16,7 @@ type ActionResult struct {
 	PageHTML     string `json:"page_html,omitempty"`  // page HTML at time of failure (for debugging)
 	PageURL      string `json:"page_url,omitempty"`   // page URL at time of failure
 	Escalated    bool   `json:"escalated,omitempty"`  // true if auto-escalated from headless to headed
+	StatusCode   int    `json:"status_code,omitempty"` // HTTP status code of the last navigation
 
 	// Eval results
 	EvalsPassed int           `json:"evals_passed,omitempty"` // number of eval assertions that passed
