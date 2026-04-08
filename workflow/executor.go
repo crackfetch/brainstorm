@@ -366,6 +366,8 @@ func stepType(s Step) string {
 		return "click"
 	case s.Fill != nil:
 		return "fill"
+	case s.Select != nil:
+		return "select"
 	case s.Upload != nil:
 		return "upload"
 	case s.Download != nil:
@@ -402,6 +404,9 @@ func (e *Executor) executeStep(step Step) error {
 
 	case step.Fill != nil:
 		return e.doFill(step.Fill)
+
+	case step.Select != nil:
+		return e.doSelect(step.Select)
 
 	case step.Upload != nil:
 		return e.doUpload(step.Upload)
@@ -501,6 +506,93 @@ func (e *Executor) doFill(f *FillStep) error {
 
 	value := InterpolateEnv(f.Value, e.workflow.Env)
 	return el.Input(value)
+}
+
+func (e *Executor) doSelect(s *SelectStep) error {
+	timeout := 5 * time.Second
+	if s.Timeout != "" {
+		timeout = ParseTimeout(s.Timeout)
+	}
+
+	el, err := e.page.Timeout(timeout).Element(s.Selector)
+	if err != nil {
+		return fmt.Errorf("find element %q: %w", s.Selector, err)
+	}
+
+	value := InterpolateEnv(s.Value, e.workflow.Env)
+	text := InterpolateEnv(s.Text, e.workflow.Env)
+
+	if value == "" && text == "" {
+		return fmt.Errorf("select step requires either value or text")
+	}
+
+	// Build JS that detects the dropdown type and selects the value.
+	// Returns a string: "ok", "disabled", "not_found", or an error message.
+	js := `function(value, text) {
+		var el = this;
+
+		// Check if disabled
+		if (el.disabled) return 'disabled';
+
+		// Detect dropdown type
+		var isSelect2 = el.classList.contains('select2-hidden-accessible') ||
+			(el.nextElementSibling && el.nextElementSibling.classList.contains('select2-container'));
+
+		// Determine which value to set
+		var targetValue = value;
+		if (!value && text) {
+			// Find option by visible text
+			var opts = el.querySelectorAll('option');
+			var found = false;
+			for (var i = 0; i < opts.length; i++) {
+				if (opts[i].textContent.trim() === text) {
+					targetValue = opts[i].value;
+					found = true;
+					break;
+				}
+			}
+			if (!found) return 'not_found_text:' + text;
+		}
+
+		// Verify the value exists in options
+		if (targetValue) {
+			var optValues = Array.from(el.querySelectorAll('option')).map(function(o) { return o.value; });
+			if (optValues.indexOf(targetValue) === -1) return 'not_found_value:' + targetValue;
+		}
+
+		// Set the value
+		el.value = targetValue;
+
+		if (isSelect2 && typeof jQuery !== 'undefined') {
+			// Select2: use jQuery API to trigger change
+			jQuery(el).val(targetValue).trigger('change');
+		} else {
+			// Native: dispatch change and input events
+			el.dispatchEvent(new Event('change', {bubbles: true}));
+			el.dispatchEvent(new Event('input', {bubbles: true}));
+		}
+
+		return 'ok';
+	}`
+
+	res, err := el.Eval(js, value, text)
+	if err != nil {
+		return fmt.Errorf("select eval: %w", err)
+	}
+
+	result := res.Value.Str()
+	switch {
+	case result == "ok":
+		return nil
+	case result == "disabled":
+		return fmt.Errorf("select %q is disabled", s.Selector)
+	case len(result) > 16 && result[:16] == "not_found_text:":
+		return fmt.Errorf("no option with text %q in %q", result[16:], s.Selector)
+	case len(result) > 17 && result[:17] == "not_found_value:":
+		return fmt.Errorf("no option with value %q in %q", result[17:], s.Selector)
+	default:
+		return fmt.Errorf("select failed: %s", result)
+	}
 }
 
 func (e *Executor) doUpload(u *UploadStep) error {

@@ -47,6 +47,7 @@ type Step struct {
 	// Interactions
 	Click    *ClickStep    `yaml:"click,omitempty"`
 	Fill     *FillStep     `yaml:"fill,omitempty"`
+	Select   *SelectStep   `yaml:"select,omitempty"`
 	Upload   *UploadStep   `yaml:"upload,omitempty"`
 	Download *DownloadStep `yaml:"download,omitempty"`
 
@@ -76,6 +77,13 @@ type FillStep struct {
 	Selector string `yaml:"selector"`
 	Value    string `yaml:"value"`          // supports ${ENV_VAR} interpolation
 	Clear    bool   `yaml:"clear,omitempty"` // clear field before filling
+}
+
+type SelectStep struct {
+	Selector string `yaml:"selector"`
+	Value    string `yaml:"value,omitempty"`   // option value to select (supports ${ENV_VAR})
+	Text     string `yaml:"text,omitempty"`    // match by visible text instead of value
+	Timeout  string `yaml:"timeout,omitempty"` // default 5s
 }
 
 type UploadStep struct {
