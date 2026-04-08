@@ -70,8 +70,16 @@ func (e *Executor) Start() error {
 
 	l = l.Set("disable-blink-features", "AutomationControlled")
 
+	// Set default viewport via Chrome flags
+	vp := DefaultViewport()
+	if e.workflow != nil && e.workflow.Viewport != nil {
+		vp = *e.workflow.Viewport
+	}
+	l = l.Set("window-size", fmt.Sprintf("%d,%d", vp.Width, vp.Height))
+
 	if e.headed {
 		l = l.Headless(false)
+		l = l.Set("window-position", "100,100")
 	}
 
 	controlURL, err := l.Launch()
@@ -84,8 +92,10 @@ func (e *Executor) Start() error {
 			}
 			l2 = l2.UserDataDir(e.profileDir)
 			l2 = l2.Set("disable-blink-features", "AutomationControlled")
+			l2 = l2.Set("window-size", fmt.Sprintf("%d,%d", vp.Width, vp.Height))
 			if e.headed {
 				l2 = l2.Headless(false)
+				l2 = l2.Set("window-position", "100,100")
 			}
 			controlURL, err = l2.Launch()
 		}
@@ -164,6 +174,11 @@ func (e *Executor) NavigateTo(url string) error {
 	}
 	e.page = page
 	e.injectStealth()
+	var wfVp *Viewport
+	if e.workflow != nil {
+		wfVp = e.workflow.Viewport
+	}
+	e.setViewport(ResolveViewport(wfVp, nil))
 	page.MustSetUserAgent(&proto.NetworkSetUserAgentOverride{
 		UserAgent: defaultUserAgent,
 	})
@@ -202,6 +217,9 @@ func (e *Executor) RunAction(name string) *ActionResult {
 
 	// Inject stealth on every new page
 	e.injectStealth()
+
+	// Set viewport (action > workflow > default)
+	e.setViewport(ResolveViewport(e.workflow.Viewport, action.Viewport))
 
 	// Set user agent
 	page.MustSetUserAgent(&proto.NetworkSetUserAgentOverride{
@@ -244,6 +262,7 @@ func (e *Executor) RunAction(name string) *ActionResult {
 			}
 			e.page = retryPage
 			e.injectStealth()
+			e.setViewport(ResolveViewport(e.workflow.Viewport, action.Viewport))
 			retryPage.MustSetUserAgent(&proto.NetworkSetUserAgentOverride{
 				UserAgent: defaultUserAgent,
 			})
@@ -678,6 +697,16 @@ func (e *Executor) doWaitURL(w *WaitURLStep) error {
 	}
 
 	return fmt.Errorf("URL did not match %q within %s", w.Match, timeout)
+}
+
+// setViewport configures the page viewport via CDP. The viewport parameter
+// is resolved from action > workflow > default before calling this.
+func (e *Executor) setViewport(vp Viewport) {
+	_ = proto.EmulationSetDeviceMetricsOverride{
+		Width:             vp.Width,
+		Height:            vp.Height,
+		DeviceScaleFactor: 1,
+	}.Call(e.page)
 }
 
 func (e *Executor) injectStealth() {
