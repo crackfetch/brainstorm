@@ -641,6 +641,7 @@ Available step types:
   navigate     Go to a URL
   click        Click element (supports: selector, text, nth, timeout)
   fill         Type into input (supports: selector, value, clear)
+  select       Set dropdown value (supports: selector, value, text, timeout)
   upload       Set file on <input type="file"> (source: path or "result")
   download     Wait for file download (supports: timeout)
   wait_visible Wait for element to appear (supports: selector, timeout)

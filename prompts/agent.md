@@ -128,6 +128,7 @@ actions:
 | navigate | `- navigate: "https://..."` | URL string, supports `${ENV}` |
 | click | `- click: { selector, text, nth, timeout }` | `selector` required, `text` filters by visible text, `nth` is 0-indexed |
 | fill | `- fill: { selector, value, clear }` | `value` supports `${ENV}`, `clear: true` clears first |
+| select | `- select: { selector, value, text, timeout }` | Set dropdown value. Auto-detects native `<select>` vs Select2. `text` matches by visible option text. Default timeout 5s |
 | upload | `- upload: { selector, source }` | `source`: file path or `"result"` (last download) |
 | download | `- download: { timeout }` | Must follow a `click` step immediately |
 | wait_visible | `- wait_visible: { selector, timeout }` | Wait for element to appear |
@@ -138,11 +139,6 @@ actions:
 | eval | `- eval: "js expression"` | Supports `${ENV}`, runs in page context |
 
 Any step can include `label: "description"` for logging and `optional: true` to continue on failure.
-
-**Dropdowns:** There is no dedicated `select` step. Use `eval` to set dropdown values:
-```yaml
-- eval: "document.querySelector('select[name=\"dept\"]').value = '${DEPT}'; document.querySelector('select[name=\"dept\"]').dispatchEvent(new Event('change', {bubbles: true}))"
-```
 
 **Click + Download rule:** Always put `download` immediately after the `click` that triggers it. brz registers the download listener before executing the click.
 
