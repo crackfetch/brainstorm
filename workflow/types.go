@@ -2,19 +2,43 @@ package workflow
 
 import "time"
 
+// Viewport configures the browser window size.
+type Viewport struct {
+	Width  int `yaml:"width"`
+	Height int `yaml:"height"`
+}
+
+// DefaultViewport returns the default browser viewport (1280x900).
+func DefaultViewport() Viewport {
+	return Viewport{Width: 1280, Height: 900}
+}
+
+// ResolveViewport returns the effective viewport: action > workflow > default.
+func ResolveViewport(workflow, action *Viewport) Viewport {
+	if action != nil {
+		return *action
+	}
+	if workflow != nil {
+		return *workflow
+	}
+	return DefaultViewport()
+}
+
 // Workflow defines a complete browser automation workflow loaded from YAML.
 type Workflow struct {
-	Name    string            `yaml:"name"`
-	Env     map[string]string `yaml:"env,omitempty"`
-	Actions map[string]Action `yaml:"actions"`
+	Name     string            `yaml:"name"`
+	Env      map[string]string `yaml:"env,omitempty"`
+	Viewport *Viewport         `yaml:"viewport,omitempty"`
+	Actions  map[string]Action `yaml:"actions"`
 }
 
 // Action is a named sequence of steps with an optional starting URL.
 type Action struct {
-	URL    string       `yaml:"url,omitempty"`
-	Headed bool         `yaml:"headed,omitempty"` // show browser window (used by BRZ_HEADED=auto)
-	Steps  []Step       `yaml:"steps"`
-	Eval   []EvalAssert `yaml:"eval,omitempty"` // post-action assertions
+	URL      string       `yaml:"url,omitempty"`
+	Headed   bool         `yaml:"headed,omitempty"`   // show browser window (used by BRZ_HEADED=auto)
+	Viewport *Viewport    `yaml:"viewport,omitempty"` // override workflow-level viewport
+	Steps    []Step       `yaml:"steps"`
+	Eval     []EvalAssert `yaml:"eval,omitempty"`     // post-action assertions
 }
 
 // EvalAssert is a single post-action assertion. Exactly one field should be set.
