@@ -8,6 +8,7 @@
 - [Getting Started](https://github.com/crackfetch/brainstorm/blob/main/docs/getting-started.md): Installation, first workflow, running actions
 - [Workflow Spec](https://github.com/crackfetch/brainstorm/blob/main/docs/workflow-spec.md): Complete YAML schema for workflow files
 - [Architecture](https://github.com/crackfetch/brainstorm/blob/main/docs/architecture.md): How brz works, Go library API, package structure
+- [Agent Prompt](https://github.com/crackfetch/brainstorm/blob/main/prompts/agent.md): Ready-to-paste system prompt that teaches any LLM how to use brz
 
 ## Commands
 
@@ -25,6 +26,8 @@
 - Semantic exit codes: 0=success, 1=step failed, 2=workflow error, 3=browser error
 - Persistent Chrome profile: login once, session survives across invocations
 - Page discovery: inspect returns selectors an LLM can use to write workflow YAML
+- Post-action eval assertions: verify page state, URL, text, download size/rows/columns after actions
+- Auto-headed mode: starts headless, escalates to headed when actions fail (e.g., expired cookies)
 - No site-specific code: all automation defined in YAML
 - Go library: importable as `github.com/crackfetch/brainstorm/workflow`
 
