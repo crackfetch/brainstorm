@@ -131,7 +131,7 @@ brz uses [rod](https://github.com/go-rod/rod), a Go library for the Chrome DevTo
 **Stealth measures:**
 - `--disable-blink-features=AutomationControlled` launch flag
 - `navigator.webdriver` property masked via JavaScript injection
-- Real Chrome User-Agent string
+- Dynamic User-Agent from the running Chrome instance (via CDP `Browser.getVersion`)
 - Persistent profile reuses legitimate session cookies
 
 ## Session Persistence
