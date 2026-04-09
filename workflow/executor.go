@@ -17,7 +17,8 @@ import (
 )
 
 const (
-	defaultUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+	// fallbackUserAgent is only used if we fail to retrieve the real UA from the browser.
+	fallbackUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 )
 
 // Executor runs workflow actions against a real browser.
@@ -29,6 +30,10 @@ type Executor struct {
 	autoHeaded bool // start headless, escalate to headed on failure
 	profileDir string
 	debug      bool
+
+	// userAgent is the real User-Agent from the running Chrome instance.
+	// Set in Start() after connecting to the browser.
+	userAgent string
 
 	// LastDownload holds the path to the most recently downloaded file.
 	LastDownload string
@@ -47,11 +52,24 @@ type Executor struct {
 // NewExecutor creates an executor with browser configuration.
 // Use functional options: WithHeaded(true), WithDebug(true), WithProfileDir("...").
 func NewExecutor(w *Workflow, opts ...Option) *Executor {
-	e := &Executor{workflow: w}
+	e := &Executor{workflow: w, userAgent: fallbackUserAgent}
 	for _, opt := range opts {
 		opt(e)
 	}
 	return e
+}
+
+// UserAgent returns the User-Agent string the executor uses for page requests.
+func (e *Executor) UserAgent() string {
+	return e.userAgent
+}
+
+// resolveUserAgent returns browserUA if non-empty, otherwise fallbackUserAgent.
+func resolveUserAgent(browserUA string) string {
+	if browserUA != "" {
+		return browserUA
+	}
+	return fallbackUserAgent
 }
 
 // Start launches the browser with stealth settings.
@@ -110,6 +128,14 @@ func (e *Executor) Start() error {
 	}
 
 	e.browser = browser
+
+	// Get the real User-Agent from the running browser instead of using the hardcoded fallback.
+	var browserUA string
+	if ver, err := (proto.BrowserGetVersion{}).Call(browser); err == nil {
+		browserUA = ver.UserAgent
+	}
+	e.userAgent = resolveUserAgent(browserUA)
+
 	return nil
 }
 
@@ -180,7 +206,7 @@ func (e *Executor) NavigateTo(url string) error {
 	}
 	e.setViewport(ResolveViewport(wfVp, nil))
 	page.MustSetUserAgent(&proto.NetworkSetUserAgentOverride{
-		UserAgent: defaultUserAgent,
+		UserAgent: e.userAgent,
 	})
 	if err := page.Navigate(url); err != nil {
 		return fmt.Errorf("navigate to %s: %w", url, err)
@@ -223,7 +249,7 @@ func (e *Executor) RunAction(name string) *ActionResult {
 
 	// Set user agent
 	page.MustSetUserAgent(&proto.NetworkSetUserAgentOverride{
-		UserAgent: defaultUserAgent,
+		UserAgent: e.userAgent,
 	})
 
 	// Navigate to action URL if specified
@@ -264,7 +290,7 @@ func (e *Executor) RunAction(name string) *ActionResult {
 			e.injectStealth()
 			e.setViewport(ResolveViewport(e.workflow.Viewport, action.Viewport))
 			retryPage.MustSetUserAgent(&proto.NetworkSetUserAgentOverride{
-				UserAgent: defaultUserAgent,
+				UserAgent: e.userAgent,
 			})
 			if action.URL != "" {
 				url := InterpolateEnv(action.URL, e.workflow.Env)
