@@ -348,22 +348,28 @@ func (e *Executor) runSteps(name string, action Action) *ActionResult {
 			}
 		}
 
-		// Capture before-screenshot (deleted on success, kept on failure)
-		var beforePath string
+		// Capture before-screenshot in memory (ring buffer of one).
+		// Zero disk I/O on success. Only written to disk on failure.
+		var beforeData []byte
 		if debugScreenshotsEnabled(e.workflow.DebugScreenshots) && e.page != nil {
-			beforePath = filepath.Join(os.TempDir(), fmt.Sprintf("%s_before_%d.jpg", name, i))
-			e.takeJPEGScreenshot(beforePath)
+			beforeData = e.captureJPEG()
 		}
 
 		if err := e.executeStep(step); err != nil {
 			if step.Optional {
 				log.Printf("[%s] optional step %d failed (non-fatal): %v", name, i+1, err)
-				os.Remove(beforePath) // clean up before screenshot for optional steps
 				continue
 			}
 
 			screenshotPath := fmt.Sprintf("%s_failed_%s_%d.png", name, time.Now().Format("20060102-150405"), i)
 			e.takeScreenshot(screenshotPath)
+
+			// Write the before screenshot to disk now that we know it's needed
+			var beforePath string
+			if len(beforeData) > 0 {
+				beforePath = filepath.Join(os.TempDir(), fmt.Sprintf("%s_before_%d.jpg", name, i))
+				os.WriteFile(beforePath, beforeData, 0644)
+			}
 
 			result := &ActionResult{
 				OK:               false,
@@ -380,11 +386,6 @@ func (e *Executor) runSteps(name string, action Action) *ActionResult {
 			result.PageURL, result.PageHTML = e.capturePageState()
 
 			return result
-		}
-
-		// Step succeeded — clean up before screenshot
-		if beforePath != "" {
-			os.Remove(beforePath)
 		}
 	}
 	return nil
@@ -738,11 +739,11 @@ func debugScreenshotsEnabled(setting *bool) bool {
 	return *setting
 }
 
-// takeJPEGScreenshot captures a lightweight JPEG screenshot for debug purposes.
-// Uses JPEG quality 50 for ~50KB files instead of full PNG.
-func (e *Executor) takeJPEGScreenshot(path string) {
+// captureJPEG returns a lightweight JPEG screenshot as bytes.
+// Returns nil if the page is unavailable or screenshot fails.
+func (e *Executor) captureJPEG() []byte {
 	if e.page == nil {
-		return
+		return nil
 	}
 	quality := 50
 	data, err := e.page.Screenshot(true, &proto.PageCaptureScreenshot{
@@ -750,9 +751,9 @@ func (e *Executor) takeJPEGScreenshot(path string) {
 		Quality: &quality,
 	})
 	if err != nil {
-		return
+		return nil
 	}
-	os.WriteFile(path, data, 0644)
+	return data
 }
 
 func (e *Executor) takeScreenshot(name string) {
