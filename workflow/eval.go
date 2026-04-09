@@ -97,13 +97,22 @@ func (e *Executor) runOneEval(assert EvalAssert) error {
 	}
 }
 
+// wrapEvalJS wraps a user-provided JavaScript expression in an arrow function
+// so that rod's Eval treats it as a function and doesn't mishandle ternary,
+// comma, or other complex expression syntax.
+// Note: only expressions are supported, not statements (e.g., "const x = 1; x"
+// will fail). This is by design — eval assertions verify a single expression.
+func wrapEvalJS(expr string) string {
+	return fmt.Sprintf("() => (%s)", expr)
+}
+
 // evalJS runs a JavaScript expression and checks that it returns truthy.
 func (e *Executor) evalJS(assert EvalAssert) error {
 	if e.page == nil {
 		return fmt.Errorf("[unreachable] no page available")
 	}
 	timeout := evalTimeout(assert)
-	res, err := e.page.Timeout(timeout).Eval(assert.JS)
+	res, err := e.page.Timeout(timeout).Eval(wrapEvalJS(assert.JS))
 	if err != nil {
 		return fmt.Errorf("[error] js eval failed: %w", err)
 	}

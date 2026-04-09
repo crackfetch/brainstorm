@@ -17,6 +17,7 @@ debug_screenshots: true   # Optional. Capture before/after screenshots on failur
 actions:                  # Required. Named actions the agent can execute.
   action_name:
     url: string           # Optional. Navigate here before running steps.
+    force_navigate: bool  # Optional. Force navigation even if URL matches current page.
     headed: bool          # Optional. When BRZ_HEADED=auto, run this action headed if headless fails.
     viewport:             # Optional. Override workflow-level viewport for this action.
       width: 375
@@ -107,7 +108,7 @@ Set a dropdown value. Auto-detects native `<select>` elements vs Select2 (jQuery
 | `text` | string | — | Match by visible option text instead of value |
 | `timeout` | string | "5s" | Max wait for element to appear |
 
-One of `value` or `text` is required. If the value/text doesn't match any option, the step fails with a clear error. Disabled dropdowns also fail.
+One of `value` or `text` is required. If the value/text doesn't match any option, the step fails with a clear error. Disabled dropdowns are retried within the timeout period (useful for AJAX-populated dropdowns that start disabled).
 
 ### upload
 
