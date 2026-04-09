@@ -294,3 +294,26 @@ func TestEvalEmptyAssert(t *testing.T) {
 		t.Error("expected error for empty assertion")
 	}
 }
+
+func TestWrapEvalJS(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"simple", "true", "() => (true)"},
+		{"ternary", "document.querySelector('.x') ? false : true", "() => (document.querySelector('.x') ? false : true)"},
+		{"comma", "(a, b)", "() => ((a, b))"},
+		{"template literal", "`hello ${name}`", "() => (`hello ${name}`)"},
+		{"arrow", "(() => 42)()", "() => ((() => 42)())"},
+		{"negation", "!document.querySelector('.error')", "() => (!document.querySelector('.error'))"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := wrapEvalJS(tt.input)
+			if got != tt.want {
+				t.Errorf("wrapEvalJS(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
