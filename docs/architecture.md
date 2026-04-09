@@ -88,7 +88,7 @@ The core engine. Six files:
 | `Start()` | All commands | Launch browser with stealth settings, auto-recover stale SingletonLock |
 | `Close()` | All commands | Shut down browser |
 | `NavigateTo(url)` | inspect, screenshot, eval | Create page, inject stealth, navigate |
-| `RunAction(name)` | run | Execute a named workflow action, auto-escalate to headed if needed |
+| `RunAction(name)` | run | Execute a named workflow action, skip same-URL navigation, auto-escalate to headed if needed |
 | `WaitOnFailure()` | run | Keep browser open on failure in headed mode for debugging |
 | `SetEnv(key, val)` | run | Inject env vars for `${VAR}` interpolation |
 | `Page()` | inspect, eval | Access the underlying rod page for direct operations |

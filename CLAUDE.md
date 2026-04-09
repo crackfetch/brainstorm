@@ -57,7 +57,8 @@ docs/                      Architecture, getting started, workflow YAML spec
 - **Eval assertions**: Post-action verification (9 types: js, url_contains, text_visible, no_text, selector, status_code, download_min_size, download_min_rows, download_has_columns).
 - **Debug screenshots**: Before/after JPEG screenshots on step failure. Ring buffer in memory, zero disk I/O on success. Opt out with `debug_screenshots: false`.
 - **Configurable viewport**: Default 1280x900. Override at workflow or action level.
-- **Native dropdown support**: `select` step auto-detects native `<select>` vs Select2 dropdowns.
+- **Smart navigation**: Skips redundant page loads when action URL matches current page. No-URL actions reuse the current tab (continuation pattern). Override with `force_navigate: true`.
+- **Native dropdown support**: `select` step auto-detects native `<select>` vs Select2 dropdowns. Retries on disabled elements within timeout (handles AJAX-populated dropdowns).
 - **System Chrome first**: Uses existing Chrome installation. Falls back to auto-download.
 - **Stealth**: Masks navigator.webdriver, disables AutomationControlled, real User-Agent.
 - **Public Go API**: `workflow/` package is importable. `hoard-agent` uses it as a library.
