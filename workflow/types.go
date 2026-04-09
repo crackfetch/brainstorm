@@ -35,12 +35,11 @@ type Workflow struct {
 
 // Action is a named sequence of steps with an optional starting URL.
 type Action struct {
-	URL            string       `yaml:"url,omitempty"`
-	ForceNavigate  bool         `yaml:"force_navigate,omitempty"` // navigate even if URL matches current page
-	Headed         bool         `yaml:"headed,omitempty"`         // show browser window (used by BRZ_HEADED=auto)
-	Viewport       *Viewport    `yaml:"viewport,omitempty"`       // override workflow-level viewport
-	Steps          []Step       `yaml:"steps"`
-	Eval           []EvalAssert `yaml:"eval,omitempty"`           // post-action assertions
+	URL      string       `yaml:"url,omitempty"`
+	Headed   bool         `yaml:"headed,omitempty"`   // show browser window (used by BRZ_HEADED=auto)
+	Viewport *Viewport    `yaml:"viewport,omitempty"` // override workflow-level viewport
+	Steps    []Step       `yaml:"steps"`
+	Eval     []EvalAssert `yaml:"eval,omitempty"`     // post-action assertions
 }
 
 // EvalAssert is a single post-action assertion. Exactly one field should be set.

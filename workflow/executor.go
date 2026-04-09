@@ -3,7 +3,6 @@ package workflow
 import (
 	"fmt"
 	"log"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -217,86 +216,6 @@ func (e *Executor) NavigateTo(url string) error {
 	return nil
 }
 
-// urlsMatchForSkip reports whether the target URL matches the current page URL
-// closely enough to skip navigation. Compares scheme, host, and path exactly.
-// Query string and fragment are also compared exactly.
-func urlsMatchForSkip(current, target string) bool {
-	cur, err1 := url.Parse(current)
-	tgt, err2 := url.Parse(target)
-	if err1 != nil || err2 != nil {
-		return false
-	}
-	return cur.Scheme == tgt.Scheme &&
-		cur.Host == tgt.Host &&
-		cur.Path == tgt.Path &&
-		cur.RawQuery == tgt.RawQuery &&
-		cur.Fragment == tgt.Fragment
-}
-
-// setupPage prepares the page for an action: creates or reuses tabs, navigates
-// if needed, injects stealth, and sets viewport/UA. Returns an error string or "".
-func (e *Executor) setupPage(action Action) string {
-	targetURL := ""
-	if action.URL != "" {
-		targetURL = InterpolateEnv(action.URL, e.workflow.Env)
-	}
-
-	// No URL and no existing page — nothing to work with.
-	if targetURL == "" && e.page == nil {
-		return "action has no URL and no prior page to continue from"
-	}
-
-	// Decide whether we can reuse the current page.
-	reuseCurrentPage := false
-	if targetURL == "" && e.page != nil {
-		// No URL specified — operate on the current page (continuation pattern).
-		reuseCurrentPage = true
-	} else if targetURL != "" && !action.ForceNavigate && e.page != nil {
-		// URL specified — check if it matches the already-loaded page.
-		// Note: page.Info() may lag after pushState/replaceState. If the page
-		// state diverged via SPA navigation, use force_navigate: true.
-		if info, err := e.page.Info(); err == nil && urlsMatchForSkip(info.URL, targetURL) {
-			reuseCurrentPage = true
-		}
-	}
-
-	if reuseCurrentPage {
-		// Reuse existing page — re-inject stealth (document context may have
-		// changed via SPA navigation since last action) and update viewport.
-		e.injectStealth()
-		e.setViewport(ResolveViewport(e.workflow.Viewport, action.Viewport))
-		return ""
-	}
-
-	// Close the previous page to prevent tab accumulation across actions.
-	if e.page != nil {
-		e.page.Close()
-	}
-
-	// Need a new page.
-	page, err := e.browser.Page(proto.TargetCreateTarget{URL: "about:blank"})
-	if err != nil {
-		return fmt.Sprintf("create page: %v", err)
-	}
-	e.page = page
-	e.injectStealth()
-	e.setViewport(ResolveViewport(e.workflow.Viewport, action.Viewport))
-	page.MustSetUserAgent(&proto.NetworkSetUserAgentOverride{
-		UserAgent: e.userAgent,
-	})
-
-	// Navigate if a URL was specified.
-	if targetURL != "" {
-		if err := page.Navigate(targetURL); err != nil {
-			return fmt.Sprintf("navigate to %s: %v", targetURL, err)
-		}
-		page.MustWaitLoad()
-		e.captureStatusCode()
-	}
-
-	return ""
-}
-
 // RunAction executes a named action from the workflow.
 // Returns a structured ActionResult suitable for JSON serialization.
 func (e *Executor) RunAction(name string) *ActionResult {
@@ -310,14 +229,42 @@ func (e *Executor) RunAction(name string) *ActionResult {
 		}
 	}
 
-	// Set up the page: reuse current tab or create a new one.
-	if errMsg := e.setupPage(action); errMsg != "" {
+	// Create a new page for each action
+	page, err := e.browser.Page(proto.TargetCreateTarget{URL: "about:blank"})
+	if err != nil {
 		return &ActionResult{
 			OK:         false,
 			Action:     name,
 			DurationMs: time.Since(start).Milliseconds(),
-			Error:      errMsg,
+			Error:      fmt.Sprintf("create page: %v", err),
 		}
+	}
+	e.page = page
+
+	// Inject stealth on every new page
+	e.injectStealth()
+
+	// Set viewport (action > workflow > default)
+	e.setViewport(ResolveViewport(e.workflow.Viewport, action.Viewport))
+
+	// Set user agent
+	page.MustSetUserAgent(&proto.NetworkSetUserAgentOverride{
+		UserAgent: e.userAgent,
+	})
+
+	// Navigate to action URL if specified
+	if action.URL != "" {
+		url := InterpolateEnv(action.URL, e.workflow.Env)
+		if err := page.Navigate(url); err != nil {
+			return &ActionResult{
+				OK:         false,
+				Action:     name,
+				DurationMs: time.Since(start).Milliseconds(),
+				Error:      fmt.Sprintf("navigate to %s: %v", url, err),
+			}
+		}
+		page.MustWaitLoad()
+		e.captureStatusCode()
 	}
 
 	// Execute steps. runSteps returns nil on success, *ActionResult on failure.
@@ -332,11 +279,27 @@ func (e *Executor) RunAction(name string) *ActionResult {
 				failResult.DurationMs = time.Since(start).Milliseconds()
 				return failResult
 			}
-			// e.page is nil after restart — setupPage will create a fresh tab.
-			if errMsg := e.setupPage(action); errMsg != "" {
-				failResult.Error += fmt.Sprintf("; headed setup failed: %s", errMsg)
+			// Set up a fresh page for the headed retry.
+			retryPage, err := e.browser.Page(proto.TargetCreateTarget{URL: "about:blank"})
+			if err != nil {
+				failResult.Error += fmt.Sprintf("; headed page create failed: %v", err)
 				failResult.DurationMs = time.Since(start).Milliseconds()
 				return failResult
+			}
+			e.page = retryPage
+			e.injectStealth()
+			e.setViewport(ResolveViewport(e.workflow.Viewport, action.Viewport))
+			retryPage.MustSetUserAgent(&proto.NetworkSetUserAgentOverride{
+				UserAgent: e.userAgent,
+			})
+			if action.URL != "" {
+				url := InterpolateEnv(action.URL, e.workflow.Env)
+				if err := retryPage.Navigate(url); err != nil {
+					failResult.Error += fmt.Sprintf("; headed navigate failed: %v", err)
+					failResult.DurationMs = time.Since(start).Milliseconds()
+					return failResult
+				}
+				retryPage.MustWaitLoad()
 			}
 			// Retry all steps in headed mode.
 			if retryResult := e.runSteps(name, action); retryResult != nil {
@@ -420,9 +383,7 @@ func (e *Executor) runSteps(name string, action Action) *ActionResult {
 
 		if err := e.executeStep(step); err != nil {
 			if step.Optional {
-				if e.debug {
-					log.Printf("[%s] optional step %d failed (non-fatal): %v", name, i+1, err)
-				}
+				log.Printf("[%s] optional step %d failed (non-fatal): %v", name, i+1, err)
 				continue
 			}
 
@@ -612,9 +573,6 @@ func (e *Executor) doSelect(s *SelectStep) error {
 	if s.Timeout != "" {
 		timeout = ParseTimeout(s.Timeout)
 	}
-	// Single deadline shared between element lookup and disabled retry
-	// so the total wait never exceeds the user-specified timeout.
-	deadline := time.Now().Add(timeout)
 
 	el, err := e.page.Timeout(timeout).Element(s.Selector)
 	if err != nil {
@@ -677,32 +635,23 @@ func (e *Executor) doSelect(s *SelectStep) error {
 		return 'ok';
 	}`
 
-	// Retry within the shared deadline — the element may start disabled and
-	// become enabled after async option loading (e.g., TCGplayer's AJAX-populated dropdowns).
-	pollInterval := 500 * time.Millisecond
-	for {
-		res, err := el.Eval(js, value, text)
-		if err != nil {
-			return fmt.Errorf("select eval: %w", err)
-		}
+	res, err := el.Eval(js, value, text)
+	if err != nil {
+		return fmt.Errorf("select eval: %w", err)
+	}
 
-		result := res.Value.Str()
-		switch {
-		case result == "ok":
-			return nil
-		case result == "disabled":
-			if time.Now().After(deadline) {
-				return fmt.Errorf("select %q is still disabled after %s", s.Selector, timeout)
-			}
-			time.Sleep(pollInterval)
-			continue
-		case len(result) > 16 && result[:16] == "not_found_text:":
-			return fmt.Errorf("no option with text %q in %q", result[16:], s.Selector)
-		case len(result) > 17 && result[:17] == "not_found_value:":
-			return fmt.Errorf("no option with value %q in %q", result[17:], s.Selector)
-		default:
-			return fmt.Errorf("select failed: %s", result)
-		}
+	result := res.Value.Str()
+	switch {
+	case result == "ok":
+		return nil
+	case result == "disabled":
+		return fmt.Errorf("select %q is disabled", s.Selector)
+	case len(result) > 16 && result[:16] == "not_found_text:":
+		return fmt.Errorf("no option with text %q in %q", result[16:], s.Selector)
+	case len(result) > 17 && result[:17] == "not_found_value:":
+		return fmt.Errorf("no option with value %q in %q", result[17:], s.Selector)
+	default:
+		return fmt.Errorf("select failed: %s", result)
 	}
 }
 

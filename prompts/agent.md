@@ -117,8 +117,7 @@ env:                              # optional default env vars
 debug_screenshots: true           # capture before/after screenshots on failure (default: true, set false for high-frequency workflows)
 actions:
   action_name:
-    url: ${BASE_URL}/page         # navigate here first (optional — omit to reuse current page)
-    force_navigate: true          # force reload even if URL matches current page (optional, default false)
+    url: ${BASE_URL}/page         # navigate here first (optional)
     headed: true                  # with BRZ_HEADED=auto, retry this action headed if headless fails (optional)
     steps:
       - fill: { selector: '#email', value: '${EMAIL}' }
@@ -132,7 +131,7 @@ actions:
 | navigate | `- navigate: "https://..."` | URL string, supports `${ENV}` |
 | click | `- click: { selector, text, nth, timeout }` | `selector` required, `text` filters by visible text, `nth` is 0-indexed |
 | fill | `- fill: { selector, value, clear }` | `value` supports `${ENV}`, `clear: true` clears first |
-| select | `- select: { selector, value, text, timeout }` | Set dropdown value. Auto-detects native `<select>` vs Select2. `text` matches by visible option text. Retries on disabled elements within timeout. Default timeout 5s |
+| select | `- select: { selector, value, text, timeout }` | Set dropdown value. Auto-detects native `<select>` vs Select2. `text` matches by visible option text. Default timeout 5s |
 | upload | `- upload: { selector, source }` | `source`: file path or `"result"` (last download) |
 | download | `- download: { timeout }` | Must follow a `click` step immediately |
 | wait_visible | `- wait_visible: { selector, timeout }` | Wait for element to appear |
@@ -173,27 +172,6 @@ All commands output JSON when piped or with `--json`. Human-readable one-liners 
 ## Session Persistence
 
 brz reuses a Chrome profile at `~/.config/brz/chrome-profile/`. Login cookies survive between runs and across all commands, including between separate `brz run` invocations. Run `login` once, then all subsequent commands (`inspect`, `run`, `screenshot`) see the authenticated session. Use `--ephemeral` for a clean session or `--profile DIR` for a custom location.
-
-## Navigation Behavior
-
-brz optimizes navigation to avoid redundant page loads:
-
-- **Same-URL skip**: If an action's `url` matches the page already loaded, navigation is skipped entirely. Saves 3-5s per redundant load on heavy pages.
-- **No-URL continuation**: If an action has no `url` field, it operates on the current page without reloading. Use this for continuation actions that run after another action on the same page.
-- **Force navigate**: Set `force_navigate: true` on an action to always reload, even when the URL matches.
-
-```yaml
-actions:
-  export_magic:
-    url: https://store.example.com/admin/pricing   # navigates first time
-    steps: [...]
-  export_pokemon:
-    url: https://store.example.com/admin/pricing   # skips navigation — same URL already loaded
-    steps: [...]
-  export_continue:
-    # no url — operates on whatever page is currently loaded
-    steps: [...]
-```
 
 ## Common Flags
 
