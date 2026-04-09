@@ -4,6 +4,12 @@ Brainstorm (`brz`) automates browser tasks. You can explore pages interactively,
 
 ## Installation
 
+### Homebrew (macOS/Linux)
+
+```bash
+brew install crackfetch/tap/brz
+```
+
 ### Download a binary
 
 Go to [Releases](https://github.com/crackfetch/brainstorm/releases) and download the binary for your platform:
@@ -236,6 +242,50 @@ Or set them in a `.env` file:
 MY_EMAIL=user@example.com
 MY_PASSWORD=secret
 ```
+
+## Selecting Dropdowns
+
+Use the `select` step to set dropdown values. It auto-detects native `<select>` elements and Select2 (jQuery) dropdowns:
+
+```yaml
+- select: { selector: '#category', value: '3' }
+- select: { selector: '#dept', text: 'Engineering' }
+```
+
+## Viewport Configuration
+
+Default viewport is 1280x900. Override at the workflow or action level:
+
+```yaml
+name: my-workflow
+viewport:
+  width: 1440
+  height: 1080
+actions:
+  mobile_test:
+    viewport: { width: 375, height: 812 }
+    steps:
+      - screenshot: "mobile.png"
+```
+
+## Eval Assertions
+
+Verify that an action produced the right result with `eval:` blocks:
+
+```yaml
+actions:
+  export:
+    steps:
+      - click: { selector: '#export-btn' }
+      - download: { timeout: '60s' }
+    eval:
+      - label: "CSV has data"
+        download_min_rows: 1
+      - label: "Still on export page"
+        url_contains: "export"
+```
+
+If any eval fails, the action result has `ok: false`. See the [Workflow Spec](workflow-spec.md) for all 9 eval types.
 
 ## Download and Upload
 

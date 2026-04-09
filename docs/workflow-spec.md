@@ -7,14 +7,22 @@ This document defines the complete YAML schema for brz workflow files. A workflo
 ## Top-Level Structure
 
 ```yaml
-name: string        # Required. Unique name for this workflow.
-env:                # Optional. Default environment variables.
+name: string              # Required. Unique name for this workflow.
+env:                      # Optional. Default environment variables.
   KEY: value
-actions:            # Required. Named actions the agent can execute.
+viewport:                 # Optional. Browser viewport size. Default: 1280x900.
+  width: 1280
+  height: 900
+debug_screenshots: true   # Optional. Capture before/after screenshots on failure. Default: true.
+actions:                  # Required. Named actions the agent can execute.
   action_name:
-    url: string     # Optional. Navigate here before running steps.
-    headed: bool    # Optional. When BRZ_HEADED=auto, run this action headed if headless fails.
-    steps: []       # Required. Ordered list of steps to execute.
+    url: string           # Optional. Navigate here before running steps.
+    headed: bool          # Optional. When BRZ_HEADED=auto, run this action headed if headless fails.
+    viewport:             # Optional. Override workflow-level viewport for this action.
+      width: 375
+      height: 812
+    steps: []             # Required. Ordered list of steps to execute.
+    eval: []              # Optional. Post-action assertions to verify success.
 ```
 
 ## Steps
@@ -76,6 +84,30 @@ Type into an input field.
 | `selector` | string | required | CSS selector for the input |
 | `value` | string | required | Text to type (supports `${ENV_VAR}`) |
 | `clear` | bool | false | Clear existing text before typing |
+
+### select
+
+Set a dropdown value. Auto-detects native `<select>` elements vs Select2 (jQuery) dropdowns and triggers the appropriate change events.
+
+```yaml
+# By option value
+- select: { selector: '#category', value: '3' }
+
+# By visible text
+- select: { selector: '#category', text: 'Pokemon' }
+
+# With env var and timeout
+- select: { selector: '#dropdown', value: '${CATEGORY_ID}', timeout: '10s' }
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `selector` | string | required | CSS selector for the `<select>` element |
+| `value` | string | — | Option value to select (supports `${ENV_VAR}`) |
+| `text` | string | — | Match by visible option text instead of value |
+| `timeout` | string | "5s" | Max wait for element to appear |
+
+One of `value` or `text` is required. If the value/text doesn't match any option, the step fails with a clear error. Disabled dropdowns also fail.
 
 ### upload
 
@@ -212,10 +244,57 @@ actions:
 
 All timeout values are Go duration strings: `"30s"`, `"2m"`, `"500ms"`. If omitted or unparseable, defaults to 30 seconds.
 
+## Optional Steps
+
+Any step can include `optional: true`. If an optional step fails, execution continues and the action can still succeed. Useful for elements that may or may not be present (dismiss buttons, "Remember Me" checkboxes, cookie banners).
+
+```yaml
+- label: "Dismiss popup if present"
+  click: { selector: '.modal-close', timeout: '3s' }
+  optional: true
+```
+
+## Eval Assertions
+
+Actions can include an `eval:` block that runs after all steps succeed. Evals verify the action produced the right result.
+
+```yaml
+actions:
+  export:
+    steps:
+      - click: { selector: '#export-btn' }
+      - download: { timeout: '60s' }
+    eval:
+      - label: "Page loaded OK"
+        status_code: 200
+      - label: "CSV has data"
+        download_min_rows: 1
+      - label: "Has required columns"
+        download_has_columns: ["ID", "Name", "Price"]
+      - label: "Still on export page"
+        url_contains: "export"
+```
+
+| Eval type | Syntax | What it checks |
+|-----------|--------|----------------|
+| `js` | `js: "expression"` | JS expression returns truthy |
+| `url_contains` | `url_contains: "path"` | Current URL contains substring |
+| `text_visible` | `text_visible: "text"` | Text appears on page |
+| `no_text` | `no_text: "text"` | Text does NOT appear on page |
+| `selector` | `selector: "#el"` | Element exists in DOM |
+| `status_code` | `status_code: 200` | HTTP status code matches |
+| `download_min_size` | `download_min_size: 50` | File at least N bytes |
+| `download_min_rows` | `download_min_rows: 1` | CSV has at least N data rows |
+| `download_has_columns` | `download_has_columns: [...]` | CSV has these column headers |
+
+Each eval can include `label:` and `timeout:` (default 10s). If any eval fails, the action result has `ok: false` with details in `eval_errors`.
+
 ## Error Handling
 
 - If any step fails, the entire action stops and returns an error.
-- On failure, a screenshot is automatically captured (saved to temp directory).
+- On failure, both a before and after screenshot are captured (before shows page state before the step, after shows the result).
+- Before screenshots are held in memory during execution (zero disk I/O on success) and only written to disk when a failure occurs.
+- Set `debug_screenshots: false` in the workflow to disable before screenshots for high-frequency workflows.
 - The calling application decides what to do with errors (retry, skip, abort).
 
 ## Click + Download Sequencing
