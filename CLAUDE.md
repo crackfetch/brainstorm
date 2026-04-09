@@ -78,6 +78,7 @@ docs/                      Architecture, getting started, workflow YAML spec
 
 ## Testing
 
-- `workflow/` — unit tests for YAML parsing, env interpolation, timeout parsing, eval assertions, viewport resolution, select step, debug screenshots, drift detection (struct reflection ensures agent.md documents all step/eval types)
+- `workflow/` — unit tests for YAML parsing, env interpolation, timeout parsing, eval assertions, viewport resolution, select step, debug screenshots, navigation URL matching, drift detection (struct reflection ensures agent.md documents all step/eval types)
+- `workflow/e2e_test.go` — automated browser E2E tests (stealth injection, page reuse, continuation pattern). Skips if Chrome not installed.
 - `cmd/brz/` — prompt content tests with struct reflection drift detection
-- Browser E2E — manual only (`brz inspect https://example.com --headed`)
+- Browser E2E — manual: `brz inspect https://example.com --headed`

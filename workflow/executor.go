@@ -803,7 +803,7 @@ func (e *Executor) setViewport(vp Viewport) {
 
 func (e *Executor) injectStealth() {
 	e.page.MustEval(`() => {
-		Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+		Object.defineProperty(navigator, 'webdriver', {get: () => undefined, configurable: true});
 	}`)
 }
 
