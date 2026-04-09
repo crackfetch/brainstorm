@@ -91,8 +91,10 @@ Success:
 
 Failure:
 ```json
-{"ok": false, "action": "login", "error": "find element ...", "failed_step": 2, "step_type": "click", "screenshot": "/tmp/debug.png"}
+{"ok": false, "action": "login", "error": "find element ...", "failed_step": 2, "step_type": "click", "screenshot": "/tmp/after.png", "screenshot_before": "/tmp/before.jpg"}
 ```
+
+On failure, `screenshot_before` shows the page BEFORE the failed step ran (JPEG, ~50KB). Compare with `screenshot` (after) to understand what changed. Both are auto-captured with zero overhead on success.
 
 ### validate — check workflow syntax
 
@@ -112,6 +114,7 @@ brz actions <workflow.yaml> [--json]
 name: my-workflow
 env:                              # optional default env vars
   BASE_URL: https://example.com
+debug_screenshots: true           # capture before/after screenshots on failure (default: true, set false for high-frequency workflows)
 actions:
   action_name:
     url: ${BASE_URL}/page         # navigate here first (optional)

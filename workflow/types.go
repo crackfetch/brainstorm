@@ -26,10 +26,11 @@ func ResolveViewport(workflow, action *Viewport) Viewport {
 
 // Workflow defines a complete browser automation workflow loaded from YAML.
 type Workflow struct {
-	Name     string            `yaml:"name"`
-	Env      map[string]string `yaml:"env,omitempty"`
-	Viewport *Viewport         `yaml:"viewport,omitempty"`
-	Actions  map[string]Action `yaml:"actions"`
+	Name             string            `yaml:"name"`
+	Env              map[string]string `yaml:"env,omitempty"`
+	Viewport         *Viewport         `yaml:"viewport,omitempty"`
+	DebugScreenshots *bool             `yaml:"debug_screenshots,omitempty"` // default: true
+	Actions          map[string]Action `yaml:"actions"`
 }
 
 // Action is a named sequence of steps with an optional starting URL.

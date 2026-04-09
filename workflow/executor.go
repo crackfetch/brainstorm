@@ -348,6 +348,13 @@ func (e *Executor) runSteps(name string, action Action) *ActionResult {
 			}
 		}
 
+		// Capture before-screenshot in memory (ring buffer of one).
+		// Zero disk I/O on success. Only written to disk on failure.
+		var beforeData []byte
+		if debugScreenshotsEnabled(e.workflow.DebugScreenshots) && e.page != nil {
+			beforeData = e.captureJPEG()
+		}
+
 		if err := e.executeStep(step); err != nil {
 			if step.Optional {
 				log.Printf("[%s] optional step %d failed (non-fatal): %v", name, i+1, err)
@@ -357,14 +364,22 @@ func (e *Executor) runSteps(name string, action Action) *ActionResult {
 			screenshotPath := fmt.Sprintf("%s_failed_%s_%d.png", name, time.Now().Format("20060102-150405"), i)
 			e.takeScreenshot(screenshotPath)
 
+			// Write the before screenshot to disk now that we know it's needed
+			var beforePath string
+			if len(beforeData) > 0 {
+				beforePath = filepath.Join(os.TempDir(), fmt.Sprintf("%s_before_%d.jpg", name, i))
+				os.WriteFile(beforePath, beforeData, 0644)
+			}
+
 			result := &ActionResult{
-				OK:         false,
-				Action:     name,
-				Steps:      i,
-				Error:      fmt.Sprintf("action %q, %s: %v", name, label, err),
-				FailedStep: i + 1,
-				StepType:   stepType(step),
-				Screenshot: filepath.Join(os.TempDir(), screenshotPath),
+				OK:               false,
+				Action:           name,
+				Steps:            i,
+				Error:            fmt.Sprintf("action %q, %s: %v", name, label, err),
+				FailedStep:       i + 1,
+				StepType:         stepType(step),
+				Screenshot:       filepath.Join(os.TempDir(), screenshotPath),
+				ScreenshotBefore: beforePath,
 			}
 
 			// Capture page state for debugging.
@@ -713,6 +728,32 @@ func (e *Executor) injectStealth() {
 	e.page.MustEval(`() => {
 		Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
 	}`)
+}
+
+// debugScreenshotsEnabled returns whether before/after debug screenshots are
+// enabled. Default is true (nil means enabled).
+func debugScreenshotsEnabled(setting *bool) bool {
+	if setting == nil {
+		return true
+	}
+	return *setting
+}
+
+// captureJPEG returns a lightweight JPEG screenshot as bytes.
+// Returns nil if the page is unavailable or screenshot fails.
+func (e *Executor) captureJPEG() []byte {
+	if e.page == nil {
+		return nil
+	}
+	quality := 50
+	data, err := e.page.Screenshot(true, &proto.PageCaptureScreenshot{
+		Format:  proto.PageCaptureScreenshotFormatJpeg,
+		Quality: &quality,
+	})
+	if err != nil {
+		return nil
+	}
+	return data
 }
 
 func (e *Executor) takeScreenshot(name string) {
