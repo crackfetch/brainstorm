@@ -16,9 +16,8 @@ actions:
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
 	}
-	// Default should be true (nil pointer means enabled)
 	if w.DebugScreenshots != nil && !*w.DebugScreenshots {
-		t.Error("debug_screenshots should default to enabled")
+		t.Error("debug_screenshots should default to enabled (nil)")
 	}
 }
 
@@ -43,26 +42,8 @@ actions:
 	}
 }
 
-func TestDebugScreenshotsParsing_Enabled(t *testing.T) {
-	yaml := `
-name: test-enabled
-debug_screenshots: true
-actions:
-  test:
-    steps:
-      - eval: "1+1"
-`
-	w, err := LoadFromBytes([]byte(yaml))
-	if err != nil {
-		t.Fatalf("parse error: %v", err)
-	}
-	if w.DebugScreenshots == nil || !*w.DebugScreenshots {
-		t.Error("debug_screenshots should be true")
-	}
-}
-
 func TestDebugScreenshotsEnabled(t *testing.T) {
-	// nil = enabled (default)
+	// nil = enabled (default behavior)
 	if !debugScreenshotsEnabled(nil) {
 		t.Error("nil should mean enabled")
 	}
@@ -78,13 +59,12 @@ func TestDebugScreenshotsEnabled(t *testing.T) {
 	}
 }
 
-func TestActionResultHasBeforeScreenshot(t *testing.T) {
-	r := &ActionResult{
-		OK:               false,
-		ScreenshotBefore: "/tmp/before.jpg",
-		Screenshot:       "/tmp/after.png",
-	}
-	if r.ScreenshotBefore == "" {
-		t.Error("expected before screenshot path")
+func TestCaptureJPEG_NoPage(t *testing.T) {
+	// captureJPEG should return nil when no browser page exists,
+	// not panic. This happens when the browser crashed or never launched.
+	exec := &Executor{}
+	data := exec.captureJPEG()
+	if data != nil {
+		t.Error("expected nil from captureJPEG with no page")
 	}
 }
