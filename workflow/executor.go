@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -21,6 +22,13 @@ const (
 	// fallbackUserAgent is only used if we fail to retrieve the real UA from the browser.
 	fallbackUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 )
+
+// headlessChromeUATokenPattern matches the canonical "HeadlessChrome/<version>"
+// form Chrome injects into its User-Agent when running headless. We deliberately
+// require the trailing "/<digit>" so we never rewrite stray substrings (e.g.
+// custom-build annotations or unknown future tokens), which would be silent
+// data corruption.
+var headlessChromeUATokenPattern = regexp.MustCompile(`HeadlessChrome/(\d)`)
 
 // Executor runs workflow actions against a real browser.
 type Executor struct {
@@ -66,30 +74,40 @@ func (e *Executor) UserAgent() string {
 }
 
 // resolveUserAgent returns browserUA if non-empty, otherwise fallbackUserAgent.
+// In headless mode Chrome reports its UA as "HeadlessChrome/X" via
+// Browser.getVersion. That token is one of the most visible headless
+// detection vectors in navigator.userAgent, so we rewrite the canonical
+// "HeadlessChrome/<version>" form to plain "Chrome/<version>". Note that
+// this only addresses the legacy User-Agent string — Client Hints
+// (navigator.userAgentData / Sec-CH-UA headers) still leak HeadlessChrome
+// in headless mode and need a separate fix.
 func resolveUserAgent(browserUA string) string {
-	if browserUA != "" {
-		return browserUA
+	if browserUA == "" {
+		return fallbackUserAgent
 	}
-	return fallbackUserAgent
+	return headlessChromeUATokenPattern.ReplaceAllString(browserUA, "Chrome/$1")
 }
 
-// Start launches the browser with stealth settings.
-func (e *Executor) Start() error {
+// buildLauncher constructs a fully-configured rod launcher with all stealth
+// settings, viewport, profile, and headed/headless mode applied. Both the
+// primary Start path and the SingletonLock recovery retry call this so the
+// two paths cannot drift — a missing flag in one of them previously meant
+// stealth would silently degrade after a stale-lock recovery.
+func (e *Executor) buildLauncher() *launcher.Launcher {
 	l := launcher.New()
 
-	// Use system Chrome if available, fall back to rod's auto-download
+	// Use system Chrome if available, fall back to rod's auto-download.
 	if path, exists := launcher.LookPath(); exists {
 		l = l.Bin(path)
 	}
 
 	if e.profileDir != "" {
-		os.MkdirAll(e.profileDir, 0755)
 		l = l.UserDataDir(e.profileDir)
 	}
 
 	l = l.Set("disable-blink-features", "AutomationControlled")
 
-	// Set default viewport via Chrome flags
+	// Set default viewport via Chrome flags.
 	vp := DefaultViewport()
 	if e.workflow != nil && e.workflow.Viewport != nil {
 		vp = *e.workflow.Viewport
@@ -99,24 +117,32 @@ func (e *Executor) Start() error {
 	if e.headed {
 		l = l.Headless(false)
 		l = l.Set("window-position", "100,100")
+	} else {
+		// Chrome 109+ ships a "new" headless mode that shares the same
+		// renderer code path as headed Chrome. It closes a number of
+		// fingerprintable differences (window.chrome stub, plugin array,
+		// permissions API behavior). Chrome 132+ removes the legacy mode
+		// entirely so the flag becomes a no-op there. On Chrome <109 the
+		// flag is unrecognized — see TODOS.md for version-gating work.
+		l = l.Set("headless", "new")
 	}
+
+	return l
+}
+
+// Start launches the browser with stealth settings.
+func (e *Executor) Start() error {
+	if e.profileDir != "" {
+		os.MkdirAll(e.profileDir, 0755)
+	}
+
+	l := e.buildLauncher()
 
 	controlURL, err := l.Launch()
 	if err != nil && e.profileDir != "" && strings.Contains(err.Error(), "SingletonLock") {
 		if e.removeStaleSingletonLock() {
 			// Stale lock removed — retry once with a fresh launcher.
-			l2 := launcher.New()
-			if path, exists := launcher.LookPath(); exists {
-				l2 = l2.Bin(path)
-			}
-			l2 = l2.UserDataDir(e.profileDir)
-			l2 = l2.Set("disable-blink-features", "AutomationControlled")
-			l2 = l2.Set("window-size", fmt.Sprintf("%d,%d", vp.Width, vp.Height))
-			if e.headed {
-				l2 = l2.Headless(false)
-				l2 = l2.Set("window-position", "100,100")
-			}
-			controlURL, err = l2.Launch()
+			controlURL, err = e.buildLauncher().Launch()
 		}
 	}
 	if err != nil {

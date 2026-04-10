@@ -1,6 +1,10 @@
 package workflow
 
 import (
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/go-rod/rod/lib/launcher"
@@ -11,6 +15,94 @@ func skipIfNoChrome(t *testing.T) {
 	t.Helper()
 	if _, exists := launcher.LookPath(); !exists {
 		t.Skip("Chrome not found — skipping browser E2E test")
+	}
+}
+
+// TestStealth_HeadlessNotLeakedInUserAgent verifies that when brz runs in
+// headless mode (the default), the Executor's UA and the page-level
+// navigator.userAgent both look like real Chrome with no "Headless" token.
+//
+// In addition to checking the absence of "Headless", this test asserts the
+// presence of "Chrome/" and "Mozilla/" — otherwise an empty/malformed UA
+// would also pass the negative check (resolveUserAgent("") returns the
+// fallback, which trivially contains no "Headless").
+func TestStealth_HeadlessNotLeakedInUserAgent(t *testing.T) {
+	skipIfNoChrome(t)
+
+	exec := NewExecutor(&Workflow{Name: "test", Actions: map[string]Action{}})
+	if err := exec.Start(); err != nil {
+		t.Fatalf("start browser: %v", err)
+	}
+	defer exec.Close()
+
+	if err := exec.NavigateTo("about:blank"); err != nil {
+		t.Fatalf("navigate: %v", err)
+	}
+
+	assertCleanChromeUA(t, "Executor.UserAgent()", exec.UserAgent())
+
+	pageUA := exec.page.MustEval(`() => navigator.userAgent`).String()
+	assertCleanChromeUA(t, "page navigator.userAgent", pageUA)
+}
+
+// TestStealth_HeadlessNotLeakedInHTTPHeader verifies that the User-Agent
+// header brz actually sends over the network in headless mode does not
+// contain "Headless". The about:blank check above only proves what JS sees
+// in-page — it cannot catch a leak at the HTTP-request layer. This test
+// stands up a local httptest.Server, navigates the executor to it, and
+// inspects the User-Agent header the server received.
+func TestStealth_HeadlessNotLeakedInHTTPHeader(t *testing.T) {
+	skipIfNoChrome(t)
+
+	var (
+		mu        sync.Mutex
+		seenUA    string
+		seenCount int
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		seenUA = r.Header.Get("User-Agent")
+		seenCount++
+		mu.Unlock()
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte("<html><body>ok</body></html>"))
+	}))
+	defer srv.Close()
+
+	exec := NewExecutor(&Workflow{Name: "test", Actions: map[string]Action{}})
+	if err := exec.Start(); err != nil {
+		t.Fatalf("start browser: %v", err)
+	}
+	defer exec.Close()
+
+	if err := exec.NavigateTo(srv.URL); err != nil {
+		t.Fatalf("navigate: %v", err)
+	}
+
+	mu.Lock()
+	gotUA := seenUA
+	gotCount := seenCount
+	mu.Unlock()
+
+	if gotCount == 0 {
+		t.Fatalf("test server received no requests — navigation never reached the network")
+	}
+	assertCleanChromeUA(t, "HTTP User-Agent header", gotUA)
+}
+
+// assertCleanChromeUA fails the test if ua looks like a HeadlessChrome leak
+// or like an empty/fallback string. A clean UA must contain "Chrome/" and
+// "Mozilla/" and must not contain "Headless".
+func assertCleanChromeUA(t *testing.T, label, ua string) {
+	t.Helper()
+	if strings.Contains(ua, "Headless") {
+		t.Errorf("%s leaks Headless: %q", label, ua)
+	}
+	if !strings.Contains(ua, "Chrome/") {
+		t.Errorf("%s missing Chrome/ token (suspicious empty/malformed UA): %q", label, ua)
+	}
+	if !strings.Contains(ua, "Mozilla/") {
+		t.Errorf("%s missing Mozilla/ token (suspicious empty/malformed UA): %q", label, ua)
 	}
 }
 
