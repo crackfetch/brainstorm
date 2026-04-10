@@ -60,7 +60,7 @@ docs/                      Architecture, getting started, workflow YAML spec
 - **Smart navigation**: Skips redundant page loads when action URL matches current page. No-URL actions reuse the current tab (continuation pattern). Override with `force_navigate: true`.
 - **Native dropdown support**: `select` step auto-detects native `<select>` vs Select2 dropdowns. Retries on disabled elements within timeout (handles AJAX-populated dropdowns).
 - **System Chrome first**: Uses existing Chrome installation. Falls back to auto-download.
-- **Stealth**: Masks navigator.webdriver, disables AutomationControlled, real User-Agent.
+- **Stealth**: Uses Chrome's new headless mode (`--headless=new`), masks navigator.webdriver in top frame, disables AutomationControlled, regex-strips canonical `HeadlessChrome/<ver>` from User-Agent. Known gaps tracked in TODOS.md: Client Hints (Sec-CH-UA), enable-automation flag, iframe webdriver mask.
 - **Public Go API**: `workflow/` package is importable. `hoard-agent` uses it as a library.
 
 ## Commands
