@@ -129,10 +129,17 @@ brz uses [rod](https://github.com/go-rod/rod), a Go library for the Chrome DevTo
 - Persistent browser profiles via `UserDataDir`
 
 **Stealth measures:**
+- Chrome's "new" headless mode (`--headless=new`, Chrome 109+) shares the same renderer code path as headed Chrome, closing several long-standing headless fingerprinting differences (window.chrome stub, plugin array, permissions API)
 - `--disable-blink-features=AutomationControlled` launch flag
-- `navigator.webdriver` property masked via JavaScript injection
-- Dynamic User-Agent from the running Chrome instance (via CDP `Browser.getVersion`)
+- `navigator.webdriver` property masked via JavaScript injection in the top-level frame
+- Dynamic User-Agent from the running Chrome instance (via CDP `Browser.getVersion`), with the canonical `HeadlessChrome/<version>` token rewritten to `Chrome/<version>` via regex (substring matches outside the canonical form are deliberately preserved to avoid silent corruption)
 - Persistent profile reuses legitimate session cookies
+
+**Known stealth gaps** (not yet addressed — see TODOS.md):
+- Client Hints (`navigator.userAgentData.brands`, `Sec-CH-UA` request headers) still leak `HeadlessChrome` even when the legacy User-Agent is clean
+- The `--enable-automation` flag is left in rod's default flag set
+- The `navigator.webdriver` mask only runs in the top-level frame, not in iframes
+- No version-gating for `--headless=new` on Chrome <109 (silently ignored or unrecognized depending on version)
 
 ## Session Persistence
 
