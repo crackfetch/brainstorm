@@ -1,5 +1,13 @@
 # TODOS
 
+> **Status note (2026-04-11):** The hoard headless sync project is DONE.
+> The root cause turned out to be Chrome process lifecycle (session cookies
+> are in-memory, die when Chrome exits), not stealth detection. The
+> stealth items below are still valuable as defense-in-depth for any brz
+> user facing anti-bot systems, but they are **NOT blockers for hoard**.
+> See hoard PR #87 for the full story. Deprioritize these below any
+> hoard-blocking work unless a brz user outside hoard needs them.
+
 ## Stealth
 
 ### Strip HeadlessChrome from Client Hints (navigator.userAgentData + Sec-CH-UA)
