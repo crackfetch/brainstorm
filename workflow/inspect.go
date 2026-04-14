@@ -13,7 +13,7 @@ type InspectResult struct {
 	DurationMs int64         `json:"duration_ms"`
 	Error      string        `json:"error,omitempty"`
 	Screenshot string        `json:"screenshot,omitempty"`
-	EvalResult interface{}   `json:"eval_result,omitempty"`
+	EvalResult any `json:"eval_result,omitempty"`
 }
 
 // ElementInfo describes a single interactive DOM element.
@@ -30,42 +30,39 @@ type ElementInfo struct {
 	Hidden      bool   `json:"hidden,omitempty"`
 }
 
-// FilterByTag returns elements whose Tag matches any of the given tags.
-// Returns all elements if tags is empty.
-func FilterByTag(elements []ElementInfo, tags []string) []ElementInfo {
-	if len(tags) == 0 {
+// filterElements returns elements where field(el) is in the allowed set.
+// Returns all elements if allowed is empty.
+func filterElements(elements []ElementInfo, allowed []string, field func(ElementInfo) string) []ElementInfo {
+	if len(allowed) == 0 {
 		return elements
 	}
-	set := make(map[string]bool, len(tags))
-	for _, t := range tags {
-		set[strings.ToLower(t)] = true
+	set := make(map[string]bool, len(allowed))
+	for _, v := range allowed {
+		set[v] = true
 	}
 	var result []ElementInfo
 	for _, el := range elements {
-		if set[el.Tag] {
+		if set[field(el)] {
 			result = append(result, el)
 		}
 	}
 	return result
 }
 
+// FilterByTag returns elements whose Tag matches any of the given tags.
+// Case-insensitive. Returns all elements if tags is empty.
+func FilterByTag(elements []ElementInfo, tags []string) []ElementInfo {
+	lower := make([]string, len(tags))
+	for i, t := range tags {
+		lower[i] = strings.ToLower(t)
+	}
+	return filterElements(elements, lower, func(el ElementInfo) string { return el.Tag })
+}
+
 // FilterByName returns elements whose Name matches any of the given names.
 // Returns all elements if names is empty.
 func FilterByName(elements []ElementInfo, names []string) []ElementInfo {
-	if len(names) == 0 {
-		return elements
-	}
-	set := make(map[string]bool, len(names))
-	for _, n := range names {
-		set[n] = true
-	}
-	var result []ElementInfo
-	for _, el := range elements {
-		if set[el.Name] {
-			result = append(result, el)
-		}
-	}
-	return result
+	return filterElements(elements, names, func(el ElementInfo) string { return el.Name })
 }
 
 // CompactElement returns a copy of el with only the core fields for token-efficient output.
@@ -97,12 +94,14 @@ func ExtractTagFromSelector(selector string) string {
 	if selector == "" {
 		return ""
 	}
-	// Take the last segment after CSS combinators (space, >, +, ~).
+	// Take the last segment after any CSS combinator (space, >, +, ~).
 	// "div > button.submit" -> "button.submit"
 	seg := selector
-	for _, sep := range []string{" > ", " + ", " ~ ", " "} {
-		if idx := strings.LastIndex(seg, sep); idx >= 0 {
-			seg = strings.TrimSpace(seg[idx+len(sep):])
+	for i := len(seg) - 1; i >= 0; i-- {
+		c := seg[i]
+		if c == ' ' || c == '>' || c == '+' || c == '~' {
+			seg = strings.TrimLeft(seg[i+1:], " >+~")
+			break
 		}
 	}
 	// Find where the tag ends (at first #, ., [, or :)

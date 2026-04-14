@@ -40,6 +40,18 @@ func (e *envFlag) Set(v string) error {
 	return nil
 }
 
+// parseEnvFlags converts --env KEY=VAL flags into a map.
+// Entries without "=" are silently skipped.
+func parseEnvFlags(envs envFlag) map[string]string {
+	m := make(map[string]string, len(envs))
+	for _, kv := range envs {
+		if k, v, ok := strings.Cut(kv, "="); ok {
+			m[k] = v
+		}
+	}
+	return m
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		printUsage()
@@ -182,15 +194,12 @@ func cmdRun(args []string) {
 	// --dry-run: resolve steps and print without launching a browser
 	if *dryRun {
 		// Build merged env: workflow defaults + --env overrides
-		mergedEnv := make(map[string]string)
+		mergedEnv := make(map[string]string, len(w.Env))
 		for k, v := range w.Env {
 			mergedEnv[k] = v
 		}
-		for _, kv := range envs {
-			parts := strings.SplitN(kv, "=", 2)
-			if len(parts) == 2 {
-				mergedEnv[parts[0]] = parts[1]
-			}
+		for k, v := range parseEnvFlags(envs) {
+			mergedEnv[k] = v
 		}
 
 		type dryRunOutput struct {
@@ -259,11 +268,8 @@ func cmdRun(args []string) {
 	exec := workflow.NewExecutor(w, opts...)
 
 	// Inject --env flags into workflow env
-	for _, kv := range envs {
-		parts := strings.SplitN(kv, "=", 2)
-		if len(parts) == 2 {
-			exec.SetEnv(parts[0], parts[1])
-		}
+	for k, v := range parseEnvFlags(envs) {
+		exec.SetEnv(k, v)
 	}
 
 	if err := exec.Start(); err != nil {
@@ -273,26 +279,26 @@ func cmdRun(args []string) {
 	defer exec.Close()
 
 	var lastResult *workflow.ActionResult
-	for _, name := range names {
+	for i, name := range names {
 		result := exec.RunAction(name)
-		if len(names) > 1 && result.OK {
+		lastResult = result
+		if !result.OK {
+			break // fail-fast
+		}
+		// Print intermediate results for multi-action (not the last one)
+		if len(names) > 1 && i < len(names)-1 {
 			if useJSON {
 				encodeJSON(result)
 			} else {
 				fmt.Printf("OK  %s  %d steps  %dms\n", result.Action, result.Steps, result.DurationMs)
 			}
 		}
-		lastResult = result
-		if !result.OK {
-			break // fail-fast
-		}
 	}
 
-	// Output final result: always print for single-action, or for
-	// multi-action failure / last success (with full details like download path).
+	// Always output the final result (last success or first failure).
 	if useJSON {
 		encodeJSON(lastResult)
-	} else if len(names) == 1 || !lastResult.OK {
+	} else {
 		printHumanResult(lastResult)
 	}
 
