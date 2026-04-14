@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -103,5 +104,134 @@ func TestResolveUserAgentStripsHeadless(t *testing.T) {
 				t.Errorf("resolveUserAgent(%q):\n  want: %q\n  got:  %q", tc.in, tc.want, got)
 			}
 		})
+	}
+}
+
+func TestBuildUserAgentMetadata(t *testing.T) {
+	tests := []struct {
+		name    string
+		product string
+	}{
+		{"headless product", "HeadlessChrome/131.0.6778.86"},
+		{"headed product", "Chrome/131.0.6778.86"},
+		{"empty product", ""},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			meta := buildUserAgentMetadata(tc.product)
+
+			if meta == nil {
+				t.Fatal("buildUserAgentMetadata returned nil")
+			}
+
+			// No brand should contain HeadlessChrome.
+			for _, b := range meta.Brands {
+				if strings.Contains(b.Brand, "HeadlessChrome") {
+					t.Errorf("Brands contains HeadlessChrome: %q", b.Brand)
+				}
+			}
+			for _, b := range meta.FullVersionList {
+				if strings.Contains(b.Brand, "HeadlessChrome") {
+					t.Errorf("FullVersionList contains HeadlessChrome: %q", b.Brand)
+				}
+			}
+
+			// Must include a real browser brand.
+			hasBrand := false
+			for _, b := range meta.Brands {
+				if b.Brand == "Chromium" || b.Brand == "Google Chrome" {
+					hasBrand = true
+					break
+				}
+			}
+			if !hasBrand {
+				t.Error("Brands missing Chromium or Google Chrome")
+			}
+
+			// Platform must not be empty.
+			if meta.Platform == "" {
+				t.Error("Platform is empty")
+			}
+		})
+	}
+}
+
+func TestRefreshUserAgent_UpdatesOnProductChange(t *testing.T) {
+	w := &Workflow{Name: "test"}
+	e := NewExecutor(w)
+
+	// Simulate initial state from Start(): product "HeadlessChrome/131.0.6778.86"
+	e.cachedProduct = "HeadlessChrome/131.0.6778.86"
+	e.userAgent = resolveUserAgent("Mozilla/5.0 HeadlessChrome/131.0.6778.86 Safari/537.36")
+	e.userAgentMeta = buildUserAgentMetadata("HeadlessChrome/131.0.6778.86")
+
+	originalUA := e.userAgent
+	originalMeta := e.userAgentMeta
+
+	// Simulate a reconnect where the browser now reports a different version.
+	newProduct := "HeadlessChrome/132.0.6834.15"
+	newUA := "Mozilla/5.0 HeadlessChrome/132.0.6834.15 Safari/537.36"
+	e.refreshUserAgent(newUA, newProduct)
+
+	// The UA should have been updated (HeadlessChrome stripped).
+	if e.userAgent == originalUA {
+		t.Error("refreshUserAgent did not update userAgent when product changed")
+	}
+	if !strings.Contains(e.userAgent, "Chrome/132") {
+		t.Errorf("expected updated UA to contain Chrome/132, got %q", e.userAgent)
+	}
+
+	// Metadata should have been updated too.
+	if e.userAgentMeta == originalMeta {
+		t.Error("refreshUserAgent did not update userAgentMeta when product changed")
+	}
+
+	// cachedProduct should be updated.
+	if e.cachedProduct != newProduct {
+		t.Errorf("expected cachedProduct %q, got %q", newProduct, e.cachedProduct)
+	}
+}
+
+func TestRefreshUserAgent_NoOpWhenProductUnchanged(t *testing.T) {
+	w := &Workflow{Name: "test"}
+	e := NewExecutor(w)
+
+	product := "HeadlessChrome/131.0.6778.86"
+	e.cachedProduct = product
+	e.userAgent = resolveUserAgent("Mozilla/5.0 HeadlessChrome/131.0.6778.86 Safari/537.36")
+	e.userAgentMeta = buildUserAgentMetadata(product)
+
+	originalUA := e.userAgent
+	originalMeta := e.userAgentMeta
+
+	// Same product — should be a no-op.
+	e.refreshUserAgent("Mozilla/5.0 HeadlessChrome/131.0.6778.86 Safari/537.36", product)
+
+	if e.userAgent != originalUA {
+		t.Errorf("refreshUserAgent changed UA when product unchanged: %q -> %q", originalUA, e.userAgent)
+	}
+	if e.userAgentMeta != originalMeta {
+		t.Error("refreshUserAgent changed metadata when product unchanged")
+	}
+}
+
+func TestBuildUserAgentMetadata_VersionParsing(t *testing.T) {
+	meta := buildUserAgentMetadata("HeadlessChrome/131.0.6778.86")
+
+	// Major version should be extracted into brands.
+	foundMajor := false
+	for _, b := range meta.Brands {
+		if b.Brand == "Chromium" && b.Version == "131" {
+			foundMajor = true
+		}
+	}
+	if !foundMajor {
+		t.Error("expected Chromium brand with major version 131")
+	}
+
+	// Full version should include the minor parts.
+	if !strings.HasPrefix(meta.FullVersion, "131.") {
+		t.Errorf("expected FullVersion starting with 131., got %q", meta.FullVersion)
 	}
 }
