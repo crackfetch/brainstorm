@@ -14,8 +14,9 @@ type ActionResult struct {
 	StepType     string `json:"step_type,omitempty"`
 	Screenshot       string `json:"screenshot,omitempty"`        // page state after failure
 	ScreenshotBefore string `json:"screenshot_before,omitempty"` // page state before the failed step
-	PageHTML     string `json:"page_html,omitempty"`  // page HTML at time of failure (for debugging)
-	PageURL      string `json:"page_url,omitempty"`   // page URL at time of failure
+	PageHTML     string        `json:"page_html,omitempty"`      // page HTML at time of failure (for debugging)
+	PageURL      string        `json:"page_url,omitempty"`       // page URL at time of failure
+	PageElements []ElementInfo `json:"page_elements,omitempty"`  // similar elements on failure (for agent context)
 	Escalated    bool   `json:"escalated,omitempty"`  // true if auto-escalated from headless to headed
 	StatusCode   int    `json:"status_code,omitempty"` // HTTP status code of the last navigation
 

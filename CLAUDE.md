@@ -39,8 +39,8 @@ workflow/                  Public package — importable by other Go programs
   loader.go                Load(), LoadFromBytes(), InterpolateEnv()
   executor.go              NewExecutor(), Start(), NavigateTo(), RunAction()
   eval.go                  Post-action eval assertions (JS, URL, text, selector, download checks)
-  result.go                ActionResult struct (JSON-serializable, includes eval results)
-  inspect.go               InspectResult, ElementInfo, InspectJS (embedded JS extractor)
+  result.go                ActionResult struct (JSON-serializable, includes eval results + page_elements on failure)
+  inspect.go               InspectResult, ElementInfo, InspectJS, SimilarElementsJS, FilterByTag/FilterByName, CompactElements
   options.go               Functional options: WithHeaded, WithAutoHeaded, WithDebug, WithProfileDir
 workflows/examples/        Example workflow definitions (YAML)
 prompts/                   LLM agent prompt (agent.md — embedded into binary via go:embed)
@@ -49,7 +49,11 @@ docs/                      Architecture, getting started, workflow YAML spec
 
 ## Key Patterns
 
-- **Discovery-first**: inspect/screenshot/eval commands let LLMs explore pages before writing workflows.
+- **Discovery-first**: inspect/screenshot/eval commands let LLMs explore pages before writing workflows. `inspect --screenshot --compact` combines discovery + visual context in one browser launch.
+- **Multi-action**: `brz run wf.yaml action1,action2` chains actions in one browser session. Fail-fast on first failure.
+- **Dry-run**: `brz run wf.yaml action --dry-run` shows resolved steps without Chrome.
+- **Error context**: Step failures include `page_elements` (up to 5 similar selectors) to avoid re-inspect round-trips.
+- **Inspect filters**: `--tag input,button --name email --compact` reduces token output for agents.
 - **Workflow-driven**: All browser automation is defined in YAML. No site-specific code in the binary.
 - **LLM-friendly**: JSON output when piped, semantic exit codes (0/1/2/3), rich --help with schemas.
 - **Session persistence**: Reuses Chrome profile between invocations. Login cookies survive across all commands. Stale SingletonLock files are auto-recovered.
@@ -67,10 +71,10 @@ docs/                      Architecture, getting started, workflow YAML spec
 
 | Command | Input | Output |
 |---------|-------|--------|
-| `brz inspect <url>` | URL | JSON: interactive elements with CSS selectors |
+| `brz inspect <url>` | URL | JSON: interactive elements with CSS selectors. Flags: `--tag`, `--name`, `--compact`, `--screenshot`, `--eval` |
 | `brz screenshot <url>` | URL | JSON: file path + size |
 | `brz eval <url> <js>` | URL + JS | JSON: eval result |
-| `brz run <wf> <action>` | Workflow YAML | JSON: action result + download path |
+| `brz run <wf> <action>[,action2]` | Workflow YAML | JSON: action result + download path. Flags: `--dry-run` |
 | `brz validate <wf>` | Workflow YAML | JSON: action/step counts |
 | `brz actions <wf>` | Workflow YAML | JSON: action list with URLs |
 | `brz prompt` | — | Markdown: full LLM agent prompt |

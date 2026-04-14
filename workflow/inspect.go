@@ -1,5 +1,7 @@
 package workflow
 
+import "strings"
+
 // InspectResult is the structured output of inspecting a page's interactive elements.
 type InspectResult struct {
 	OK         bool          `json:"ok"`
@@ -10,6 +12,8 @@ type InspectResult struct {
 	Truncated  bool          `json:"truncated,omitempty"`
 	DurationMs int64         `json:"duration_ms"`
 	Error      string        `json:"error,omitempty"`
+	Screenshot string        `json:"screenshot,omitempty"`
+	EvalResult interface{}   `json:"eval_result,omitempty"`
 }
 
 // ElementInfo describes a single interactive DOM element.
@@ -25,6 +29,137 @@ type ElementInfo struct {
 	Role        string `json:"role,omitempty"`
 	Hidden      bool   `json:"hidden,omitempty"`
 }
+
+// FilterByTag returns elements whose Tag matches any of the given tags.
+// Returns all elements if tags is empty.
+func FilterByTag(elements []ElementInfo, tags []string) []ElementInfo {
+	if len(tags) == 0 {
+		return elements
+	}
+	set := make(map[string]bool, len(tags))
+	for _, t := range tags {
+		set[t] = true
+	}
+	var result []ElementInfo
+	for _, el := range elements {
+		if set[el.Tag] {
+			result = append(result, el)
+		}
+	}
+	return result
+}
+
+// FilterByName returns elements whose Name matches any of the given names.
+// Returns all elements if names is empty.
+func FilterByName(elements []ElementInfo, names []string) []ElementInfo {
+	if len(names) == 0 {
+		return elements
+	}
+	set := make(map[string]bool, len(names))
+	for _, n := range names {
+		set[n] = true
+	}
+	var result []ElementInfo
+	for _, el := range elements {
+		if set[el.Name] {
+			result = append(result, el)
+		}
+	}
+	return result
+}
+
+// CompactElement returns a copy of el with only the core fields for token-efficient output.
+// Keeps: Selector, Tag, Type, Name, Text. Strips everything else.
+func CompactElement(el ElementInfo) ElementInfo {
+	return ElementInfo{
+		Selector: el.Selector,
+		Tag:      el.Tag,
+		Type:     el.Type,
+		Name:     el.Name,
+		Text:     el.Text,
+	}
+}
+
+// CompactElements applies CompactElement to each element in the slice.
+func CompactElements(elements []ElementInfo) []ElementInfo {
+	result := make([]ElementInfo, len(elements))
+	for i, el := range elements {
+		result[i] = CompactElement(el)
+	}
+	return result
+}
+
+// ExtractTagFromSelector parses a CSS selector and returns the tag name.
+// Examples: "button.submit" -> "button", "input#email" -> "input", "#id" -> "".
+func ExtractTagFromSelector(selector string) string {
+	if selector == "" {
+		return ""
+	}
+	// Find where the tag ends (at first #, ., [, :, or space)
+	end := len(selector)
+	for i, c := range selector {
+		if c == '#' || c == '.' || c == '[' || c == ':' || c == ' ' {
+			end = i
+			break
+		}
+	}
+	tag := strings.ToLower(selector[:end])
+	return tag
+}
+
+// StepSelector returns the CSS selector from a step, or "" if the step
+// doesn't target a selector (e.g., navigate, sleep, download).
+func StepSelector(step Step) string {
+	switch {
+	case step.Click != nil:
+		return step.Click.Selector
+	case step.Fill != nil:
+		return step.Fill.Selector
+	case step.Select != nil:
+		return step.Select.Selector
+	case step.WaitVisible != nil:
+		return step.WaitVisible.Selector
+	default:
+		return ""
+	}
+}
+
+// SimilarElementsJS is JavaScript that finds up to 5 elements of a given tag type.
+// Called on step failure to provide context about what elements ARE on the page.
+// Takes a tag name parameter and returns a JSON array of element descriptors.
+const SimilarElementsJS = `(tag) => {
+	const maxResults = 5;
+	const elements = tag ? document.querySelectorAll(tag) : document.querySelectorAll('button, input, a, select');
+	const results = [];
+
+	for (let i = 0; i < elements.length && results.length < maxResults; i++) {
+		const el = elements[i];
+		const rect = el.getBoundingClientRect();
+		if (rect.width === 0 && rect.height === 0) continue;
+
+		const info = {};
+		// Build selector
+		if (el.id) {
+			info.selector = '#' + CSS.escape(el.id);
+		} else if (el.name) {
+			info.selector = el.tagName.toLowerCase() + '[name="' + el.name + '"]';
+		} else if (el.className && typeof el.className === 'string') {
+			const cls = el.className.trim().split(/\s+/).slice(0, 2).map(c => '.' + CSS.escape(c)).join('');
+			info.selector = el.tagName.toLowerCase() + cls;
+		} else {
+			info.selector = el.tagName.toLowerCase();
+		}
+
+		info.tag = el.tagName.toLowerCase();
+		if (el.type) info.type = el.type;
+		if (el.name) info.name = el.name;
+		const text = (el.textContent || '').trim().substring(0, 80);
+		if (text && ['button', 'a'].includes(info.tag)) info.text = text;
+
+		results.push(info);
+	}
+	return results;
+}`
 
 // inspectJS extracts interactive elements from the DOM.
 // Returns a JSON array of element descriptors.

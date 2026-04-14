@@ -138,6 +138,25 @@ type SleepStep struct {
 	Duration string `yaml:"duration"`
 }
 
+// ResolvedStep is a flat representation of a workflow step with all env vars
+// interpolated. Used by --dry-run to show what would execute.
+type ResolvedStep struct {
+	Type     string `json:"type"`
+	Selector string `json:"selector,omitempty"`
+	Value    string `json:"value,omitempty"`
+	Text     string `json:"text,omitempty"`
+	URL      string `json:"url,omitempty"`
+	Timeout  string `json:"timeout,omitempty"`
+	Source   string `json:"source,omitempty"`
+	Match    string `json:"match,omitempty"`
+	Duration string `json:"duration,omitempty"`
+	Clear    bool   `json:"clear,omitempty"`
+	Nth      int    `json:"nth,omitempty"`
+	Label    string `json:"label,omitempty"`
+	Optional bool   `json:"optional,omitempty"`
+	Expr     string `json:"expr,omitempty"`
+}
+
 // ParseTimeout converts a timeout string like "30s" or "2m" to a Duration.
 // Defaults to 30s if empty or unparseable.
 func ParseTimeout(s string) time.Duration {

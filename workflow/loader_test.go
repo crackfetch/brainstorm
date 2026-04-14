@@ -175,6 +175,36 @@ func TestParseTimeout(t *testing.T) {
 	}
 }
 
+func TestSplitActionNames(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected []string
+	}{
+		{"login", []string{"login"}},
+		{"login,export", []string{"login", "export"}},
+		{"login,export,cleanup", []string{"login", "export", "cleanup"}},
+		{"login,", []string{"login"}},                       // trailing comma
+		{",login", []string{"login"}},                       // leading comma
+		{"login,,export", []string{"login", "export"}},      // double comma
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			result := SplitActionNames(tt.input)
+			if len(result) != len(tt.expected) {
+				t.Errorf("SplitActionNames(%q) = %v (len %d), want %v (len %d)",
+					tt.input, result, len(result), tt.expected, len(tt.expected))
+				return
+			}
+			for i, name := range result {
+				if name != tt.expected[i] {
+					t.Errorf("SplitActionNames(%q)[%d] = %q, want %q", tt.input, i, name, tt.expected[i])
+				}
+			}
+		})
+	}
+}
+
 func writeTempYAML(t *testing.T, content string) string {
 	t.Helper()
 	dir := t.TempDir()
