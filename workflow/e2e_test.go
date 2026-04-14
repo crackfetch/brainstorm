@@ -119,9 +119,7 @@ func TestStealthInjection_Idempotent(t *testing.T) {
 		t.Fatalf("navigate: %v", err)
 	}
 
-	// Second injection on the same page must not panic.
-	// Before the fix, this panicked with:
-	//   TypeError: Cannot redefine property: webdriver
+	// Multiple registrations via EvalOnNewDocument must not panic.
 	exec.injectStealth()
 }
 
@@ -192,5 +190,82 @@ func TestRunAction_NoURL_ContinuationPattern(t *testing.T) {
 	r2 := exec.RunAction("continue")
 	if !r2.OK {
 		t.Fatalf("continuation action failed: %s", r2.Error)
+	}
+}
+
+// TestStealth_HeadlessNotLeakedInClientHints verifies that the Sec-CH-UA
+// request header sent by headless Chrome does not contain "HeadlessChrome".
+// Modern anti-bot systems (Cloudflare, PerimeterX, DataDome) read Client
+// Hints headers instead of (or in addition to) the legacy User-Agent string.
+// Chrome populates Sec-CH-UA from navigator.userAgentData.brands, which in
+// headless mode includes a "HeadlessChrome" brand by default. We override
+// UserAgentMetadata via CDP to strip it.
+func TestStealth_HeadlessNotLeakedInClientHints(t *testing.T) {
+	skipIfNoChrome(t)
+
+	var (
+		mu         sync.Mutex
+		seenCHUA   string
+		seenCount  int
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		if seenCount == 0 {
+			seenCHUA = r.Header.Get("Sec-CH-UA")
+		}
+		seenCount++
+		mu.Unlock()
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte("<html><body>ok</body></html>"))
+	}))
+	defer srv.Close()
+
+	exec := NewExecutor(&Workflow{Name: "test", Actions: map[string]Action{}})
+	if err := exec.Start(); err != nil {
+		t.Fatalf("start browser: %v", err)
+	}
+	defer exec.Close()
+
+	if err := exec.NavigateTo(srv.URL); err != nil {
+		t.Fatalf("navigate: %v", err)
+	}
+
+	mu.Lock()
+	gotCHUA := seenCHUA
+	gotCount := seenCount
+	mu.Unlock()
+
+	if gotCount == 0 {
+		t.Fatalf("test server received no requests")
+	}
+
+	// Check the Sec-CH-UA HTTP header if present.
+	if gotCHUA != "" {
+		if strings.Contains(gotCHUA, "HeadlessChrome") {
+			t.Errorf("Sec-CH-UA header leaks HeadlessChrome: %q", gotCHUA)
+		}
+		if !strings.Contains(gotCHUA, "Chromium") && !strings.Contains(gotCHUA, "Google Chrome") {
+			t.Errorf("Sec-CH-UA header missing expected browser brand: %q", gotCHUA)
+		}
+	}
+
+	// Also verify navigator.userAgentData.brands in JS — this is what
+	// in-page anti-bot scripts read (Cloudflare, PerimeterX, DataDome).
+	brandsJSON := exec.page.MustEval(`() => {
+		if (!navigator.userAgentData) return "";
+		return JSON.stringify(navigator.userAgentData.brands);
+	}`).String()
+
+	if brandsJSON == "" {
+		t.Skip("browser does not support navigator.userAgentData (older Chrome version?)")
+	}
+
+	if strings.Contains(brandsJSON, "HeadlessChrome") {
+		t.Errorf("navigator.userAgentData.brands leaks HeadlessChrome: %s", brandsJSON)
+	}
+
+	// The override must populate real Chrome brands (not leave them empty).
+	if !strings.Contains(brandsJSON, "Chromium") && !strings.Contains(brandsJSON, "Google Chrome") {
+		t.Errorf("navigator.userAgentData.brands missing expected browser brand: %s", brandsJSON)
 	}
 }
