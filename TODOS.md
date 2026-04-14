@@ -1,69 +1,44 @@
 # TODOS
 
+> **Status note (2026-04-14):** All items completed. The stealth items below
+> are defense-in-depth for brz users facing anti-bot systems, not blockers
+> for hoard. See hoard PR #87 for the full story.
+
 ## Stealth
 
-### Strip HeadlessChrome from Client Hints (navigator.userAgentData + Sec-CH-UA)
-**Priority:** P1
+### ~~Delete --enable-automation from rod's default launcher flags~~
+**Done (2026-04-14).** `l.Delete("enable-automation")` added to `buildLauncher`.
+Launcher test asserts the flag is absent.
 
-Modern anti-bot systems (Cloudflare, PerimeterX, DataDome) read
-`navigator.userAgentData.brands` and the `Sec-CH-UA` / `Sec-CH-UA-Full-Version-List`
-request headers, not `navigator.userAgent`. The current UA strip only addresses
-the legacy header. In headless mode Chrome still advertises `"HeadlessChrome"`
-in `userAgentData.brands` and emits it on every Client Hints HTTP header.
+### ~~Move navigator.webdriver mask to EvalOnNewDocument~~
+**Done (2026-04-14).** `injectStealth` now uses `MustEvalOnNewDocument`,
+covering all frames (including cross-origin iframes like reCAPTCHA).
+Redundant re-injection on page reuse removed.
 
-Fix: pass a populated `proto.NetworkSetUserAgentOverride.UserAgentMetadata`
-struct to `MustSetUserAgent` with Chrome-branded entries instead of
-HeadlessChrome. Add an httptest assertion on `Sec-CH-UA` to lock it in.
+### ~~Strip HeadlessChrome from Client Hints (navigator.userAgentData + Sec-CH-UA)~~
+**Done (2026-04-14).** `buildUserAgentMetadata` constructs Chrome-branded
+`UserAgentMetadata` from the browser's product string, stripping HeadlessChrome.
+Applied via `MustSetUserAgent` in both `NavigateTo` and `setupPage`. E2E test
+verifies `Sec-CH-UA` header and `navigator.userAgentData.brands` are clean.
+Unit tests cover version parsing and brand construction.
 
-### Delete --enable-automation from rod's default launcher flags
-**Priority:** P1
+### ~~Version-gate --headless=new for Chrome <109~~
+**Done (2026-04-14).** `detectChromeVersion` probes system Chrome via `--version`,
+caches the result on the Executor. Chrome <109 gets bare `--headless`, 109+ gets
+`--headless=new`, unknown defaults to `--headless=new`. Unit tests cover 9 version
+parsing cases and 5 launcher flag scenarios.
 
-Rod's `launcher.New()` defaults include `enable-automation`. This flag adds
-the automation infobar in headed mode and may re-enable `navigator.webdriver`
-on some Chrome versions even after the JS mask. It is a bigger fingerprint
-leak than the UA token.
-
-Fix: `l.Delete("enable-automation")` in `buildLauncher`. Add a launcher-args
-unit test asserting the flag is absent.
-
-### Move navigator.webdriver mask to EvalOnNewDocument
-**Priority:** P1
-
-`injectStealth` runs against the top-level document only. Cross-origin
-iframes (reCAPTCHA, payment widgets, embeds) still see
-`navigator.webdriver === true`. Page reuse re-runs the injection which is
-why the existing fix had to be made idempotent — using
-`page.MustEvalOnNewDocument` runs the script before every document in
-every frame and eliminates both bugs at once.
-
-### Version-gate --headless=new for Chrome <109
-**Priority:** P2
-
-`--headless=new` shipped in Chrome 109. On Chrome <109 the value is
-unrecognized — depending on the build, Chrome falls back to legacy headless,
-ignores the flag, or launches headed. The last case would silently pop
-visible windows on hoard-agent cron runs.
-
-Fix: probe Chrome version via `launcher.LookPath()` + `--version` once at
-startup, only set `--headless=new` on 109+, fall back to bare `--headless`
-otherwise.
-
-### Refresh User-Agent on browser reconnect
-**Priority:** P3
-
-`resolveUserAgent` runs once in `Start()`. If rod silently reconnects after
-a DevTools disconnect, the cached `e.userAgent` may diverge from the
-running browser. Low likelihood in current usage but the field is now
-load-bearing for stealth.
+### ~~Refresh User-Agent on browser reconnect~~
+**Done (2026-04-14).** `refreshUserAgentFromBrowser` queries `BrowserGetVersion`
+before every `MustSetUserAgent` call. No-op when product string hasn't changed
+(fast path: one CDP call + string compare). Updates both legacy UA and Client
+Hints metadata on product change.
 
 ## Library API
 
-### Mutex-protect Executor for concurrent goroutine use
-**Priority:** P3
-
-The `workflow/` package advertises itself as importable. Library consumers
-(hoard-agent) call `Start()` and `NavigateTo()` from the same goroutine
-today, but the public API does not enforce that. `e.userAgent`, `e.page`,
-and `e.LastDownload` have no synchronization.
-
-Fix: add a `sync.Mutex` to `Executor` and document the threading contract.
+### ~~Mutex-protect Executor for concurrent goroutine use~~
+**Done (2026-04-14).** `sync.Mutex` added to Executor. All public methods acquire
+the lock; private methods assume the caller holds it. `WaitOnFailure` copies fields
+under lock then releases before blocking on stdin. `restart()` uses `closeLocked`/
+`startLocked` to avoid double-locking. Race detector test with 40 concurrent
+goroutines passes cleanly.

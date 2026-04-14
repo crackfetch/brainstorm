@@ -60,8 +60,8 @@ docs/                      Architecture, getting started, workflow YAML spec
 - **Smart navigation**: Skips redundant page loads when action URL matches current page. No-URL actions reuse the current tab (continuation pattern). Override with `force_navigate: true`.
 - **Native dropdown support**: `select` step auto-detects native `<select>` vs Select2 dropdowns. Retries on disabled elements within timeout (handles AJAX-populated dropdowns).
 - **System Chrome first**: Uses existing Chrome installation. Falls back to auto-download.
-- **Stealth**: Uses Chrome's new headless mode (`--headless=new`), masks navigator.webdriver in top frame, disables AutomationControlled, regex-strips canonical `HeadlessChrome/<ver>` from User-Agent. Known gaps tracked in TODOS.md: Client Hints (Sec-CH-UA), enable-automation flag, iframe webdriver mask.
-- **Public Go API**: `workflow/` package is importable. `hoard-agent` uses it as a library.
+- **Stealth**: Uses Chrome's new headless mode (`--headless=new`, version-gated for Chrome <109), masks navigator.webdriver via `EvalOnNewDocument` (covers all frames including cross-origin iframes), deletes `enable-automation` from rod's default flags, disables AutomationControlled, regex-strips canonical `HeadlessChrome/<ver>` from User-Agent, overrides Client Hints (`Sec-CH-UA`, `navigator.userAgentData.brands`) with real Chrome brands. UA refreshed automatically on browser reconnect.
+- **Public Go API**: `workflow/` package is importable and thread-safe (mutex-protected). `hoard-agent` uses it as a library.
 
 ## Commands
 
@@ -79,6 +79,7 @@ docs/                      Architecture, getting started, workflow YAML spec
 ## Testing
 
 - `workflow/` — unit tests for YAML parsing, env interpolation, timeout parsing, eval assertions, viewport resolution, select step, debug screenshots, navigation URL matching, drift detection (struct reflection ensures agent.md documents all step/eval types)
-- `workflow/e2e_test.go` — automated browser E2E tests (stealth injection, page reuse, continuation pattern). Skips if Chrome not installed.
+- `workflow/e2e_test.go` — automated browser E2E tests (stealth injection, Client Hints verification, page reuse, continuation pattern). Skips if Chrome not installed.
+- `workflow/mutex_test.go` — concurrent access race detector test (40 goroutines)
 - `cmd/brz/` — prompt content tests with struct reflection drift detection
 - Browser E2E — manual: `brz inspect https://example.com --headed`

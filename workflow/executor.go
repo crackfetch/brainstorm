@@ -5,10 +5,13 @@ import (
 	"log"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -31,7 +34,14 @@ const (
 var headlessChromeUATokenPattern = regexp.MustCompile(`HeadlessChrome/(\d)`)
 
 // Executor runs workflow actions against a real browser.
+//
+// Threading contract: Executor is safe for concurrent use by multiple
+// goroutines. All public methods acquire mu before accessing internal state.
+// Private methods assume the caller already holds the lock and must NOT
+// lock mu themselves, preventing recursive lock deadlocks.
 type Executor struct {
+	mu sync.Mutex
+
 	browser    *rod.Browser
 	page       *rod.Page
 	workflow   *Workflow
@@ -44,12 +54,27 @@ type Executor struct {
 	// Set in Start() after connecting to the browser.
 	userAgent string
 
+	// userAgentMeta holds Client Hints metadata (brands, platform, etc.)
+	// to override navigator.userAgentData and Sec-CH-UA headers. Built in
+	// Start() from the browser version, stripping any HeadlessChrome brands.
+	userAgentMeta *proto.EmulationUserAgentMetadata
+
 	// LastDownload holds the path to the most recently downloaded file.
 	LastDownload string
 	// LastResult holds the string result of the most recent action (e.g. downloaded CSV content).
 	LastResult string
 	// LastStatusCode holds the HTTP status code from the most recent navigation.
 	LastStatusCode int
+
+	// cachedProduct stores the browser product string (e.g. "HeadlessChrome/131.0.6778.86")
+	// from the last BrowserGetVersion call. Used to detect when the browser has
+	// reconnected with a different version, triggering a UA refresh.
+	cachedProduct string
+
+	// chromeVersion caches the detected Chrome major version (e.g. 131).
+	// 0 means unknown (detection failed or not yet run). Used to gate
+	// --headless=new which requires Chrome 109+.
+	chromeVersion int
 
 	// pendingDownloadWait holds a WaitDownload callback registered before a click
 	// that triggers a download. This solves the sequencing issue where rod requires
@@ -70,6 +95,8 @@ func NewExecutor(w *Workflow, opts ...Option) *Executor {
 
 // UserAgent returns the User-Agent string the executor uses for page requests.
 func (e *Executor) UserAgent() string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	return e.userAgent
 }
 
@@ -77,15 +104,134 @@ func (e *Executor) UserAgent() string {
 // In headless mode Chrome reports its UA as "HeadlessChrome/X" via
 // Browser.getVersion. That token is one of the most visible headless
 // detection vectors in navigator.userAgent, so we rewrite the canonical
-// "HeadlessChrome/<version>" form to plain "Chrome/<version>". Note that
-// this only addresses the legacy User-Agent string — Client Hints
-// (navigator.userAgentData / Sec-CH-UA headers) still leak HeadlessChrome
-// in headless mode and need a separate fix.
+// "HeadlessChrome/<version>" form to plain "Chrome/<version>". Client Hints
+// (navigator.userAgentData / Sec-CH-UA headers) are handled separately by
+// buildUserAgentMetadata which populates UserAgentMetadata on every page.
 func resolveUserAgent(browserUA string) string {
 	if browserUA == "" {
 		return fallbackUserAgent
 	}
 	return headlessChromeUATokenPattern.ReplaceAllString(browserUA, "Chrome/$1")
+}
+
+// refreshUserAgent updates the cached User-Agent and Client Hints metadata
+// if the browser product string has changed (e.g. after a DevTools reconnect).
+// When the product matches cachedProduct, this is a no-op.
+func (e *Executor) refreshUserAgent(browserUA, browserProduct string) {
+	if browserProduct == e.cachedProduct {
+		return
+	}
+	e.cachedProduct = browserProduct
+	e.userAgent = resolveUserAgent(browserUA)
+	e.userAgentMeta = buildUserAgentMetadata(browserProduct)
+}
+
+// refreshUserAgentFromBrowser queries BrowserGetVersion and updates the cached
+// UA fields if the product has changed. Called before MustSetUserAgent in
+// NavigateTo and setupPage to handle silent browser reconnects.
+func (e *Executor) refreshUserAgentFromBrowser() {
+	if e.browser == nil {
+		return
+	}
+	ver, err := (proto.BrowserGetVersion{}).Call(e.browser)
+	if err != nil {
+		return
+	}
+	e.refreshUserAgent(ver.UserAgent, ver.Product)
+}
+
+// chromeVersionPattern extracts the major version from a Chrome product string
+// like "HeadlessChrome/131.0.6778.86" or "Chrome/131.0.6778.86".
+var chromeVersionPattern = regexp.MustCompile(`(?:Headless)?Chrome/(\d+)\.(\d+\.\d+\.\d+)`)
+
+// chromeCLIVersionPattern matches the output of `chrome --version`, e.g.
+// "Google Chrome 131.0.6778.86" or "Chromium 90.0.4430.212 built on Debian".
+var chromeCLIVersionPattern = regexp.MustCompile(`(?:Google Chrome|Chromium)\s+(\d+)`)
+
+// parseChromeVersion extracts the major version number from Chrome's --version
+// output (e.g. "Google Chrome 131.0.6778.86" -> 131). Returns 0 on parse failure.
+func parseChromeVersion(output string) int {
+	m := chromeCLIVersionPattern.FindStringSubmatch(output)
+	if m == nil {
+		return 0
+	}
+	v, err := strconv.Atoi(m[1])
+	if err != nil {
+		return 0
+	}
+	return v
+}
+
+// detectChromeVersion runs `<binPath> --version` and returns the major version.
+// Returns 0 if the binary can't be run or the output can't be parsed.
+func detectChromeVersion(binPath string) int {
+	out, err := exec.Command(binPath, "--version").Output()
+	if err != nil {
+		return 0
+	}
+	return parseChromeVersion(strings.TrimSpace(string(out)))
+}
+
+// buildUserAgentMetadata constructs Client Hints metadata from the browser's
+// product string (e.g. "HeadlessChrome/131.0.6778.86"). The brands list uses
+// real Chrome and Chromium entries — never HeadlessChrome — so that
+// navigator.userAgentData.brands and the Sec-CH-UA HTTP header look identical
+// to a real headed browser.
+func buildUserAgentMetadata(product string) *proto.EmulationUserAgentMetadata {
+	major := "131"
+	full := "131.0.0.0"
+	if m := chromeVersionPattern.FindStringSubmatch(product); m != nil {
+		major = m[1]
+		full = m[1] + "." + m[2]
+	}
+
+	// GREASE-like "Not A;Brand" entry mirrors what real Chrome sends.
+	brands := []*proto.EmulationUserAgentBrandVersion{
+		{Brand: "Chromium", Version: major},
+		{Brand: "Google Chrome", Version: major},
+		{Brand: "Not A;Brand", Version: "99"},
+	}
+	fullVersionList := []*proto.EmulationUserAgentBrandVersion{
+		{Brand: "Chromium", Version: full},
+		{Brand: "Google Chrome", Version: full},
+		{Brand: "Not A;Brand", Version: "99.0.0.0"},
+	}
+
+	platform, arch := clientHintsPlatform()
+
+	return &proto.EmulationUserAgentMetadata{
+		Brands:          brands,
+		FullVersionList: fullVersionList,
+		FullVersion:     full,
+		Platform:        platform,
+		PlatformVersion: "15.0.0",
+		Architecture:    arch,
+		Model:           "",
+		Mobile:          false,
+	}
+}
+
+// clientHintsPlatform returns the Sec-CH-UA-Platform and Sec-CH-UA-Arch
+// values that match the current OS and architecture. These must match
+// what a real Chrome installation would report.
+func clientHintsPlatform() (platform, arch string) {
+	switch runtime.GOOS {
+	case "darwin":
+		platform = "macOS"
+	case "windows":
+		platform = "Windows"
+	default:
+		platform = "Linux"
+	}
+	switch runtime.GOARCH {
+	case "arm64":
+		arch = "arm"
+	case "amd64":
+		arch = "x86"
+	default:
+		arch = runtime.GOARCH
+	}
+	return
 }
 
 // buildLauncher constructs a fully-configured rod launcher with all stealth
@@ -99,6 +245,10 @@ func (e *Executor) buildLauncher() *launcher.Launcher {
 	// Use system Chrome if available, fall back to rod's auto-download.
 	if path, exists := launcher.LookPath(); exists {
 		l = l.Bin(path)
+		// Cache Chrome version on first call so we don't shell out repeatedly.
+		if e.chromeVersion == 0 {
+			e.chromeVersion = detectChromeVersion(path)
+		}
 	}
 
 	if e.profileDir != "" {
@@ -106,6 +256,7 @@ func (e *Executor) buildLauncher() *launcher.Launcher {
 	}
 
 	l = l.Set("disable-blink-features", "AutomationControlled")
+	l = l.Delete("enable-automation")
 
 	// Set default viewport via Chrome flags.
 	vp := DefaultViewport()
@@ -122,9 +273,16 @@ func (e *Executor) buildLauncher() *launcher.Launcher {
 		// renderer code path as headed Chrome. It closes a number of
 		// fingerprintable differences (window.chrome stub, plugin array,
 		// permissions API behavior). Chrome 132+ removes the legacy mode
-		// entirely so the flag becomes a no-op there. On Chrome <109 the
-		// flag is unrecognized — see TODOS.md for version-gating work.
-		l = l.Set("headless", "new")
+		// entirely so the flag becomes a no-op there.
+		//
+		// On Chrome <109 the flag is unrecognized and may cause Chrome to
+		// fall back to legacy headless, ignore the flag, or launch headed.
+		// We fall back to bare --headless for those old versions.
+		if e.chromeVersion > 0 && e.chromeVersion < 109 {
+			l = l.Headless(true)
+		} else {
+			l = l.Set("headless", "new")
+		}
 	}
 
 	return l
@@ -132,6 +290,12 @@ func (e *Executor) buildLauncher() *launcher.Launcher {
 
 // Start launches the browser with stealth settings.
 func (e *Executor) Start() error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.startLocked()
+}
+
+func (e *Executor) startLocked() error {
 	if e.profileDir != "" {
 		os.MkdirAll(e.profileDir, 0755)
 	}
@@ -157,11 +321,14 @@ func (e *Executor) Start() error {
 	e.browser = browser
 
 	// Get the real User-Agent from the running browser instead of using the hardcoded fallback.
-	var browserUA string
+	var browserUA, browserProduct string
 	if ver, err := (proto.BrowserGetVersion{}).Call(browser); err == nil {
 		browserUA = ver.UserAgent
+		browserProduct = ver.Product
 	}
+	e.cachedProduct = browserProduct
 	e.userAgent = resolveUserAgent(browserUA)
+	e.userAgentMeta = buildUserAgentMetadata(browserProduct)
 
 	return nil
 }
@@ -206,13 +373,19 @@ func (e *Executor) removeStaleSingletonLock() bool {
 
 // restart shuts down the current browser and relaunches with a new headed mode.
 func (e *Executor) restart(headed bool) error {
-	e.Close()
+	e.closeLocked()
 	e.headed = headed
-	return e.Start()
+	return e.startLocked()
 }
 
 // Close shuts down the browser.
 func (e *Executor) Close() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.closeLocked()
+}
+
+func (e *Executor) closeLocked() {
 	if e.browser != nil {
 		e.browser.Close()
 	}
@@ -221,6 +394,8 @@ func (e *Executor) Close() {
 // NavigateTo creates a new page, injects stealth, and navigates to the given URL.
 // Used by one-shot commands (inspect, screenshot, eval) that don't need a workflow.
 func (e *Executor) NavigateTo(url string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	page, err := e.browser.Page(proto.TargetCreateTarget{URL: "about:blank"})
 	if err != nil {
 		return fmt.Errorf("create page: %w", err)
@@ -232,8 +407,10 @@ func (e *Executor) NavigateTo(url string) error {
 		wfVp = e.workflow.Viewport
 	}
 	e.setViewport(ResolveViewport(wfVp, nil))
+	e.refreshUserAgentFromBrowser()
 	page.MustSetUserAgent(&proto.NetworkSetUserAgentOverride{
-		UserAgent: e.userAgent,
+		UserAgent:         e.userAgent,
+		UserAgentMetadata: e.userAgentMeta,
 	})
 	if err := page.Navigate(url); err != nil {
 		return fmt.Errorf("navigate to %s: %w", url, err)
@@ -287,9 +464,8 @@ func (e *Executor) setupPage(action Action) string {
 	}
 
 	if reuseCurrentPage {
-		// Reuse existing page — re-inject stealth (document context may have
-		// changed via SPA navigation since last action) and update viewport.
-		e.injectStealth()
+		// Reuse existing page — stealth is already registered via
+		// EvalOnNewDocument so no re-injection needed. Update viewport.
 		e.setViewport(ResolveViewport(e.workflow.Viewport, action.Viewport))
 		return ""
 	}
@@ -307,8 +483,10 @@ func (e *Executor) setupPage(action Action) string {
 	e.page = page
 	e.injectStealth()
 	e.setViewport(ResolveViewport(e.workflow.Viewport, action.Viewport))
+	e.refreshUserAgentFromBrowser()
 	page.MustSetUserAgent(&proto.NetworkSetUserAgentOverride{
-		UserAgent: e.userAgent,
+		UserAgent:         e.userAgent,
+		UserAgentMetadata: e.userAgentMeta,
 	})
 
 	// Navigate if a URL was specified.
@@ -326,6 +504,8 @@ func (e *Executor) setupPage(action Action) string {
 // RunAction executes a named action from the workflow.
 // Returns a structured ActionResult suitable for JSON serialization.
 func (e *Executor) RunAction(name string) *ActionResult {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	start := time.Now()
 	action, ok := e.workflow.Actions[name]
 	if !ok {
@@ -828,9 +1008,9 @@ func (e *Executor) setViewport(vp Viewport) {
 }
 
 func (e *Executor) injectStealth() {
-	e.page.MustEval(`() => {
+	e.page.MustEvalOnNewDocument(`
 		Object.defineProperty(navigator, 'webdriver', {get: () => undefined, configurable: true});
-	}`)
+	`)
 }
 
 // debugScreenshotsEnabled returns whether before/after debug screenshots are
@@ -912,7 +1092,11 @@ func (e *Executor) capturePageState() (pageURL, pageHTML string) {
 // action failed. Call this from the CLI layer after RunAction returns a failure.
 // Waits for the user to press Enter in the terminal, then returns.
 func (e *Executor) WaitOnFailure() {
-	if !e.headed || e.page == nil {
+	e.mu.Lock()
+	headed := e.headed
+	page := e.page
+	e.mu.Unlock()
+	if !headed || page == nil {
 		return
 	}
 	fmt.Fprintf(os.Stderr, "\nBrowser kept open for debugging. Press Enter to close...\n")
@@ -922,22 +1106,30 @@ func (e *Executor) WaitOnFailure() {
 
 // Page returns the current page for advanced usage.
 func (e *Executor) Page() *rod.Page {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	return e.page
 }
 
 // KeyPress sends a keyboard input to the current page.
 func (e *Executor) KeyPress(key input.Key) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	return e.page.Keyboard.Press(key)
 }
 
 // IsHeaded returns whether the browser is in headed (visible) mode.
 func (e *Executor) IsHeaded() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	return e.headed
 }
 
 // SetEnv sets an environment variable in the workflow's env map.
 // These are used by InterpolateEnv for ${VAR} substitution in step values.
 func (e *Executor) SetEnv(key, value string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	if e.workflow.Env == nil {
 		e.workflow.Env = make(map[string]string)
 	}

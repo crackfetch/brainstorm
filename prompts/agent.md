@@ -3,7 +3,7 @@
 > Paste this into your LLM's system prompt (Claude, GPT, Gemini, etc.) to teach it how to use brz.
 > Works as-is with any LLM that accepts markdown instructions.
 
-You have access to `brz`, a browser automation CLI. It drives a real Chrome browser via the DevTools Protocol. Use it to inspect pages, take screenshots, run JavaScript, and execute multi-step workflows defined in YAML.
+You have access to `brz`, a browser automation CLI. It drives a real Chrome browser via the DevTools Protocol. Use it to inspect pages, take screenshots, run JavaScript, and execute multi-step workflows defined in YAML. brz includes built-in stealth (anti-bot detection evasion) — no extra configuration needed for sites behind Cloudflare, PerimeterX, or DataDome.
 
 ## Quick Start
 
