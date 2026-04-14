@@ -19,7 +19,12 @@ func TestExtractTagFromSelector(t *testing.T) {
 		{".just-class", ""},        // no tag, just class
 		{"[role=\"button\"]", ""},   // attribute selector, no tag
 		{"", ""},                    // empty
-		{"BUTTON.submit", "button"}, // uppercase -> lowercase
+		{"BUTTON.submit", "button"},              // uppercase -> lowercase
+		{"div > button.submit", "button"},         // child combinator
+		{"ul li a.link", "a"},                     // descendant combinator
+		{"div + p.intro", "p"},                    // adjacent sibling
+		{"h2 ~ p", "p"},                           // general sibling
+		{"div > ul > li > a#link", "a"},           // deep nesting
 	}
 
 	for _, tt := range tests {

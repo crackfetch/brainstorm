@@ -167,6 +167,11 @@ func cmdRun(args []string) {
 	names := workflow.SplitActionNames(actionArg)
 	useJSON := bf.json || !term.IsTerminal(int(os.Stdout.Fd()))
 
+	if len(names) == 0 {
+		outputError(useJSON, exitWorkflowError, "no action name provided")
+		return
+	}
+
 	// Load workflow
 	w, err := workflow.Load(workflowPath)
 	if err != nil {
@@ -207,12 +212,10 @@ func cmdRun(args []string) {
 		}
 
 		if useJSON {
-			enc := json.NewEncoder(os.Stdout)
-			enc.SetEscapeHTML(false)
 			if len(output) == 1 {
-				enc.Encode(output[0])
+				encodeJSON(output[0])
 			} else {
-				enc.Encode(output)
+				encodeJSON(output)
 			}
 		} else {
 			for _, o := range output {
@@ -274,9 +277,7 @@ func cmdRun(args []string) {
 		result := exec.RunAction(name)
 		if len(names) > 1 && result.OK {
 			if useJSON {
-				enc := json.NewEncoder(os.Stdout)
-				enc.SetEscapeHTML(false)
-				enc.Encode(result)
+				encodeJSON(result)
 			} else {
 				fmt.Printf("OK  %s  %d steps  %dms\n", result.Action, result.Steps, result.DurationMs)
 			}
@@ -287,24 +288,12 @@ func cmdRun(args []string) {
 		}
 	}
 
-	// Output final result (or the only result for single-action)
-	if len(names) == 1 {
-		if useJSON {
-			enc := json.NewEncoder(os.Stdout)
-			enc.SetEscapeHTML(false)
-			enc.Encode(lastResult)
-		} else {
-			printHumanResult(lastResult)
-		}
-	} else if !lastResult.OK {
-		// Multi-action: print the failing result
-		if useJSON {
-			enc := json.NewEncoder(os.Stdout)
-			enc.SetEscapeHTML(false)
-			enc.Encode(lastResult)
-		} else {
-			printHumanResult(lastResult)
-		}
+	// Output final result: always print for single-action, or for
+	// multi-action failure / last success (with full details like download path).
+	if useJSON {
+		encodeJSON(lastResult)
+	} else if len(names) == 1 || !lastResult.OK {
+		printHumanResult(lastResult)
 	}
 
 	if !lastResult.OK {
@@ -402,13 +391,13 @@ func cmdInspect(args []string) {
 		evalRes, evalErr := exec.Page().Eval(js)
 		if evalErr == nil {
 			result.EvalResult = evalRes.Value.Val()
+		} else if result.Error == "" {
+			result.Error = fmt.Sprintf("eval: %v", evalErr)
 		}
 	}
 
 	if useJSON {
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetEscapeHTML(false)
-		enc.Encode(result)
+		encodeJSON(result)
 	} else {
 		fmt.Printf("OK  %s  %d elements  %dms\n", result.URL, result.Total, result.DurationMs)
 		for _, el := range result.Elements {
@@ -659,6 +648,12 @@ func cmdActions(args []string) {
 // ---------------------------------------------------------------------------
 // Output helpers
 // ---------------------------------------------------------------------------
+
+func encodeJSON(v interface{}) {
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetEscapeHTML(false)
+	enc.Encode(v)
+}
 
 func outputError(useJSON bool, code int, msg string) {
 	if useJSON {

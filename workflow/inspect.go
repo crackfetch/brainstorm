@@ -38,7 +38,7 @@ func FilterByTag(elements []ElementInfo, tags []string) []ElementInfo {
 	}
 	set := make(map[string]bool, len(tags))
 	for _, t := range tags {
-		set[t] = true
+		set[strings.ToLower(t)] = true
 	}
 	var result []ElementInfo
 	for _, el := range elements {
@@ -89,22 +89,31 @@ func CompactElements(elements []ElementInfo) []ElementInfo {
 	return result
 }
 
-// ExtractTagFromSelector parses a CSS selector and returns the tag name.
-// Examples: "button.submit" -> "button", "input#email" -> "input", "#id" -> "".
+// ExtractTagFromSelector parses a CSS selector and returns the tag name
+// from the last segment (after CSS combinators like >, +, ~, space).
+// Examples: "button.submit" -> "button", "div > button.submit" -> "button",
+// "input#email" -> "input", "#id" -> "".
 func ExtractTagFromSelector(selector string) string {
 	if selector == "" {
 		return ""
 	}
-	// Find where the tag ends (at first #, ., [, :, or space)
-	end := len(selector)
-	for i, c := range selector {
-		if c == '#' || c == '.' || c == '[' || c == ':' || c == ' ' {
+	// Take the last segment after CSS combinators (space, >, +, ~).
+	// "div > button.submit" -> "button.submit"
+	seg := selector
+	for _, sep := range []string{" > ", " + ", " ~ ", " "} {
+		if idx := strings.LastIndex(seg, sep); idx >= 0 {
+			seg = strings.TrimSpace(seg[idx+len(sep):])
+		}
+	}
+	// Find where the tag ends (at first #, ., [, or :)
+	end := len(seg)
+	for i, c := range seg {
+		if c == '#' || c == '.' || c == '[' || c == ':' {
 			end = i
 			break
 		}
 	}
-	tag := strings.ToLower(selector[:end])
-	return tag
+	return strings.ToLower(seg[:end])
 }
 
 // StepSelector returns the CSS selector from a step, or "" if the step
