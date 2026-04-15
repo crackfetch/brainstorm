@@ -343,7 +343,7 @@
 
   .hero-sub {
     font-family: var(--font-mono);
-    font-size: 14px;
+    font-size: 16px;
     color: var(--muted);
     max-width: 540px;
     margin: 0 auto 36px;
@@ -587,7 +587,7 @@
 
   .section-desc {
     font-family: var(--font-mono);
-    font-size: 14px;
+    font-size: 16px;
     color: var(--muted);
     max-width: 560px;
     line-height: 1.8;
@@ -613,7 +613,7 @@
   /* === USE CASES === */
   .usecase-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
+    grid-template-columns: 1fr 1fr;
     gap: 2px;
     background: var(--border);
   }
@@ -622,24 +622,20 @@
     padding: 28px 24px;
     transition: background 0.15s;
     position: relative;
+    display: flex;
+    flex-direction: column;
   }
   .usecase-card:hover { background: var(--surface-alt); }
   .usecase-card::before {
     content: '';
     position: absolute;
-    top: 0; left: 0; right: 0;
-    height: 2px;
-    background: var(--magenta);
+    top: 0; left: 0;
+    width: 3px; height: 100%;
+    background: var(--cyan);
     opacity: 0;
     transition: opacity 0.2s;
   }
   .usecase-card:hover::before { opacity: 1; }
-  .usecase-icon {
-    font-family: var(--font-pixel);
-    font-size: 18px;
-    margin-bottom: 16px;
-    line-height: 1;
-  }
   .usecase-card h3 {
     font-family: var(--font-sans);
     font-size: 17px;
@@ -649,15 +645,16 @@
     letter-spacing: -0.01em;
   }
   .usecase-card p {
-    font-size: 14px;
+    font-size: 15px;
     color: var(--muted);
     line-height: 1.65;
+    flex: 1;
   }
   .usecase-card .usecase-example {
     font-family: var(--font-mono);
     font-size: 12px;
     color: var(--cyan);
-    margin-top: 12px;
+    margin-top: 16px;
     padding: 8px 10px;
     background: var(--bg);
     border: 1px solid var(--border);
@@ -666,7 +663,7 @@
   }
 
   .why-lead {
-    font-size: 17px;
+    font-size: 18px;
     color: var(--text);
     max-width: 640px;
     line-height: 1.75;
@@ -715,7 +712,7 @@
     text-shadow: 0 0 8px rgba(0, 255, 238, 0.3);
   }
   .flow-step p {
-    font-size: 14px;
+    font-size: 15px;
     color: var(--muted);
     line-height: 1.6;
   }
@@ -771,7 +768,7 @@
     overflow-x: auto;
   }
   .cmd-card p {
-    font-size: 13px;
+    font-size: 15px;
     color: var(--muted);
     line-height: 1.6;
   }
@@ -852,7 +849,7 @@
     letter-spacing: 0.02em;
   }
   .feature-card p {
-    font-size: 14px;
+    font-size: 15px;
     color: var(--muted);
     line-height: 1.6;
   }
@@ -874,7 +871,7 @@
   }
   .yaml-info p {
     font-family: var(--font-mono);
-    font-size: 13px;
+    font-size: 15px;
     color: var(--muted);
     line-height: 1.8;
     margin-bottom: 16px;
@@ -933,7 +930,7 @@
     text-transform: uppercase;
   }
   .agent-card p {
-    font-size: 13px;
+    font-size: 15px;
     color: var(--muted);
     line-height: 1.6;
   }
@@ -962,7 +959,7 @@
   }
   .cta-section .cta-sub {
     font-family: var(--font-mono);
-    font-size: 14px;
+    font-size: 16px;
     color: var(--muted);
     margin-bottom: 36px;
     max-width: 420px;
