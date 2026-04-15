@@ -1108,9 +1108,9 @@
     <h1 class="chromatic">Browser automation<br>for <span class="accent">the terminal</span><span class="accent-m">.</span></h1>
 
     <p class="hero-sub">
-      YAML-driven. Stealth-hardened. JSON output.<br>
-      One binary, zero dependencies.<br>
-      Built for developers and LLM agents.
+      Write YAML. brz clicks the buttons.<br>
+      One Go binary. Stealth baked in.<br>
+      Works alone or inside your LLM agent.
     </p>
 
     <div class="hero-actions">
@@ -1193,49 +1193,43 @@
     <div class="section-label fade-in">// Why brz</div>
     <h2 class="section-title fade-in">The website has no API. Now what?</h2>
     <p class="why-lead fade-in">
-      Most of the software you rely on every day doesn't give you an API. No export button. No webhook. No way to get your own data out, or to stop doing the same 15 clicks every morning. <strong>brz automates the browser you're already using.</strong> You describe the steps in a simple YAML file, and brz does the clicking for you, returning structured data you can actually use.
+      You know the drill. The web app you depend on has your data, but no way to get it out programmatically. So you log in, click through four pages, hit Export, wait, download a CSV, then do it again tomorrow. <strong>brz does that whole sequence from one terminal command.</strong> You write the steps in YAML, brz drives Chrome, and you get JSON back.
     </p>
 
     <div class="usecase-grid fade-in">
       <div class="usecase-card">
-        <div class="usecase-icon">📦</div>
-        <h3>Get your data out</h3>
-        <p>You use a web app for work. It has your sales, your inventory, your reports. But it has no API and no bulk export. brz logs in, navigates to the export page, clicks the button, and downloads the CSV. Every day if you want.</p>
+        <h3>Export from apps that won't let you</h3>
+        <p>Your CRM, your analytics dashboard, your admin panel... they all have an Export button buried three clicks deep. brz logs in, finds it, clicks it, downloads the file. Set it up once, run it forever.</p>
         <code class="usecase-example">brz run exports.yaml login,download-report</code>
       </div>
 
       <div class="usecase-card">
-        <div class="usecase-icon">🔁</div>
-        <h3>Stop doing the same clicks</h3>
-        <p>You log in, click Settings, click Export, wait for a spinner, download a file, then upload it somewhere else. You do this every week. brz turns that into one command you can run from your terminal or schedule with cron.</p>
+        <h3>Kill the manual workflow</h3>
+        <p>That thing you do every Monday morning where you log into two apps, download a CSV from one, upload it to the other, and then check it worked? That's a 6-line YAML file and a cron job now.</p>
         <code class="usecase-example">brz run weekly-sync.yaml export,upload</code>
       </div>
 
       <div class="usecase-card">
-        <div class="usecase-icon">🤖</div>
-        <h3>Give your AI a browser</h3>
-        <p>You're building an agent with Claude or GPT and it needs to interact with a website. brz gives your LLM real browser capabilities: inspect a page to find form fields, generate a YAML workflow, execute it, and get JSON back in its tool-use loop.</p>
+        <h3>Plug a browser into your LLM</h3>
+        <p>Your agent needs to fill out a form, scrape a table, or download a report. brz inspect tells it what's on the page. The agent writes the YAML. brz run executes it. JSON comes back. That's the whole loop.</p>
         <code class="usecase-example">brz inspect $URL --compact --json</code>
       </div>
 
       <div class="usecase-card">
-        <div class="usecase-icon">🔄</div>
-        <h3>Move data between apps</h3>
-        <p>App A has the data. App B needs it. Neither has an API. brz exports from one and uploads to the other in a single chained workflow. Login cookies persist between runs, so authentication is a one-time cost.</p>
+        <h3>Pipe data between web apps</h3>
+        <p>App A has pricing data. App B needs it. Neither has an API. Chain two actions in one brz session: export from the first, upload to the second. Cookies persist, so you're not re-authenticating every time.</p>
         <code class="usecase-example">brz run sync.yaml export-a,import-b</code>
       </div>
 
       <div class="usecase-card">
-        <div class="usecase-icon">📊</div>
-        <h3>Monitor without an API</h3>
-        <p>You need to know when a price changes, when inventory drops below a threshold, or when a dashboard metric hits a number. brz can visit the page, run JavaScript to extract the value, and return it as JSON for your script to act on.</p>
+        <h3>Scrape a number off a page</h3>
+        <p>Sometimes you just need one value: a price, a stock count, a status. brz eval runs JavaScript on any page and returns the result as JSON. Wrap it in a shell script. Check it every hour.</p>
         <code class="usecase-example">brz eval $URL "document.querySelector('.price').textContent"</code>
       </div>
 
       <div class="usecase-card">
-        <div class="usecase-icon">✅</div>
-        <h3>Verify it actually worked</h3>
-        <p>Other automation tools tell you "I clicked the button." brz tells you whether the export had rows, whether the CSV had the right columns, whether the page ended up at the right URL. Eval assertions verify the result, not just the action.</p>
+        <h3>Know it worked, not just that it ran</h3>
+        <p>The export completed, but was the CSV empty? Did the page redirect to an error? Eval assertions check the actual outcome: row counts, column names, URL, visible text. If the data's wrong, brz fails loud.</p>
         <code class="usecase-example">eval: [download_min_rows: 1, url_contains: "/success"]</code>
       </div>
     </div>
@@ -1248,8 +1242,8 @@
 <section id="how-it-works">
   <div class="container">
     <div class="section-label fade-in">// How it works</div>
-    <h2 class="section-title fade-in">Discover. Automate. Verify.</h2>
-    <p class="section-desc fade-in">Three steps. No SDK, no framework, no site-specific code. Every web automation starts the same way.</p>
+    <h2 class="section-title fade-in">Three steps to any workflow</h2>
+    <p class="section-desc fade-in">Same pattern every time. Find the selectors, write the YAML, run it.</p>
 
     <div class="flow-steps fade-in pixel-corners">
       <div class="flow-step">
@@ -1298,13 +1292,13 @@
   <div class="container">
     <div class="section-label fade-in">// Commands</div>
     <h2 class="section-title fade-in">Eight commands. That's the whole CLI.</h2>
-    <p class="section-desc fade-in">Unix philosophy: each command does one thing. Compose them with pipes, scripts, and your LLM agent's tool-use loop.</p>
+    <p class="section-desc fade-in">Each one does one thing. Pipe them together. Let your agent call them in a loop.</p>
 
     <div class="cmd-grid fade-in">
       <div class="cmd-card">
         <h3>brz <span>inspect</span></h3>
         <div class="cmd-usage">brz inspect &lt;url&gt; [flags]</div>
-        <p>List every interactive element on a page with its CSS selector. The starting point for any automation.</p>
+        <p>Shows every interactive element on a page with CSS selectors you can paste straight into YAML.</p>
         <div class="cmd-flags">
           <span class="cmd-flag">--compact</span>
           <span class="cmd-flag">--tag</span>
@@ -1316,7 +1310,7 @@
       <div class="cmd-card">
         <h3>brz <span>run</span></h3>
         <div class="cmd-usage">brz run &lt;wf.yaml&gt; &lt;action&gt; [flags]</div>
-        <p>Execute a YAML workflow action against a real Chrome browser. Chain actions with commas.</p>
+        <p>Runs a workflow action in Chrome. Comma-separate to chain them: login,export.</p>
         <div class="cmd-flags">
           <span class="cmd-flag">--env KEY=VAL</span>
           <span class="cmd-flag">--dry-run</span>
@@ -1376,11 +1370,11 @@
   <div class="container">
     <div class="section-label fade-in">// Workflows</div>
     <h2 class="section-title fade-in">YAML in. Browser out.</h2>
-    <p class="section-desc fade-in">No site-specific code in the binary. What you automate is defined entirely by your workflow file. Simple enough to write by hand, structured enough for agents to generate.</p>
+    <p class="section-desc fade-in">The binary has zero site-specific code. Your workflow YAML is the whole program. Write it yourself or let your agent generate it.</p>
 
     <div class="yaml-section fade-in">
       <div class="yaml-info">
-        <h3>12 step types cover every interaction</h3>
+        <h3>12 step types</h3>
         <p>Each step is a single YAML line. Selectors come from <code style="font-family: var(--font-mono); font-size: 12px; background: var(--bg); padding: 2px 5px; color: var(--cyan); border: 1px solid var(--border);">brz inspect</code>. Environment variables interpolate with <code style="font-family: var(--font-mono); font-size: 12px; background: var(--bg); padding: 2px 5px; color: var(--cyan); border: 1px solid var(--border);">${VAR}</code>.</p>
         <div class="steps-table-wrap" style="margin-top: 20px;">
           <table class="steps-table">
@@ -1467,7 +1461,7 @@
   <div class="container">
     <div class="section-label fade-in">// Built for Agents</div>
     <h2 class="section-title fade-in">Your LLM's browser.</h2>
-    <p class="section-desc fade-in">Designed from day one for LLM tool-use loops. JSON output. Semantic exit codes. Error context with similar selectors. An embedded prompt you can copy into any agent.</p>
+    <p class="section-desc fade-in">brz outputs JSON when piped, returns meaningful exit codes, and includes similar selectors in error messages so your agent can self-correct.</p>
 
     <div class="agent-grid fade-in">
       <div>
@@ -1499,19 +1493,19 @@
       <div class="agent-cards">
         <div class="agent-card">
           <h3>JSON When Piped</h3>
-          <p>TTY gets human-readable output. Pipes get structured JSON. Your agent always gets parseable data.</p>
+          <p>Run it in a terminal, you get readable text. Pipe it somewhere, you get JSON. Automatic.</p>
         </div>
         <div class="agent-card">
           <h3>Error Recovery</h3>
-          <p>Failed steps include <code>page_elements</code> with up to 5 similar selectors. Self-correct without re-inspecting.</p>
+          <p>When a step fails, the JSON includes <code>page_elements</code> with nearby selectors. The agent fixes the YAML without having to re-inspect.</p>
         </div>
         <div class="agent-card">
           <h3>Embedded Prompt</h3>
-          <p><code>brz prompt</code> outputs a complete system prompt. Every command, flag, step type, error pattern.</p>
+          <p><code>brz prompt</code> prints a system prompt you paste into your agent. It covers all the commands, flags, and failure modes.</p>
         </div>
         <div class="agent-card">
           <h3>Session Persistence</h3>
-          <p>Login once, cookies persist forever. Authenticate once, every subsequent command sees the session.</p>
+          <p>Cookies stick around between runs. Log in once with --headed, then every brz command after that is authenticated.</p>
         </div>
       </div>
     </div>
@@ -1525,40 +1519,40 @@
   <div class="container">
     <div class="section-label fade-in">// Features</div>
     <h2 class="section-title fade-in">One tool, done right.</h2>
-    <p class="section-desc fade-in">No plugin system. No configuration files. No framework tax. Just a binary that does exactly what you tell it to.</p>
+    <p class="section-desc fade-in">It's a Go binary. You install it, you run it. There is no config file.</p>
 
     <div class="feature-grid fade-in">
       <div class="feature-card">
         <h3>Stealth Mode</h3>
-        <p>New headless mode, webdriver masking, Client Hints spoofing, real User-Agent. Passes Cloudflare, PerimeterX, DataDome. Zero config.</p>
+        <p>Masks the webdriver flag, spoofs Client Hints, uses a real User-Agent. Sites behind Cloudflare and DataDome don't know it's automated.</p>
       </div>
       <div class="feature-card">
         <h3>Auto-Headed Fallback</h3>
-        <p>Set BRZ_HEADED=auto. Starts headless, escalates to headed when CAPTCHA or expired cookies detected. Browser stays open for intervention.</p>
+        <p>BRZ_HEADED=auto starts headless but pops open a real window if it hits a CAPTCHA or stale session. Solve it manually, brz picks back up.</p>
       </div>
       <div class="feature-card">
         <h3>Debug Screenshots</h3>
-        <p>Before/after JPEGs on every step failure. Ring buffer in memory, zero disk I/O on success. See what the browser saw.</p>
+        <p>Captures before/after JPEGs when a step fails. Kept in a ring buffer in memory, so you pay nothing on success. When something breaks, you see exactly what Chrome saw.</p>
       </div>
       <div class="feature-card">
         <h3>9 Eval Assertions</h3>
-        <p>Post-action verification: JS, URL match, text visibility, selector existence, status codes, download size, CSV rows, column validation.</p>
+        <p>After the steps run, check the result: did the CSV have rows? Did the URL end up where it should? Was the error text absent? Nine different checks.</p>
       </div>
       <div class="feature-card">
         <h3>Smart Navigation</h3>
-        <p>Skips redundant loads when action URL matches current page. No-URL actions reuse current tab. Saves seconds per run.</p>
+        <p>If the next action targets the same URL, brz skips the navigation. Actions with no URL just keep working on whatever page is loaded.</p>
       </div>
       <div class="feature-card">
         <h3>Native Dropdowns</h3>
-        <p>The select step auto-detects native vs Select2. Retries disabled elements within timeout for AJAX-populated options.</p>
+        <p>The select step figures out if it's a real &lt;select&gt; or a Select2 widget and handles both. Retries if the dropdown is still loading from AJAX.</p>
       </div>
       <div class="feature-card">
         <h3>System Chrome First</h3>
-        <p>Uses your existing Chrome. No download on first run. Falls back to auto-download only when Chrome isn't found.</p>
+        <p>Finds and uses the Chrome already on your machine. Only downloads Chromium if you don't have Chrome installed at all.</p>
       </div>
       <div class="feature-card">
         <h3>Public Go API</h3>
-        <p>The workflow/ package is importable and thread-safe. Build your own Go programs on brz's execution engine.</p>
+        <p>Import the workflow/ package into your own Go code. It's mutex-protected and safe to call from multiple goroutines.</p>
       </div>
     </div>
   </div>
@@ -1572,8 +1566,8 @@
     <div class="glow-orb" style="width: 500px; height: 500px; background: rgba(0, 255, 238, 0.05); bottom: -200px; right: -200px;"></div>
     <div class="glow-orb" style="width: 400px; height: 400px; background: rgba(255, 0, 128, 0.04); bottom: -100px; left: -150px;"></div>
 
-    <h2 class="fade-in">Start automating.</h2>
-    <p class="cta-sub fade-in">One install. One binary. One YAML file between you and your first workflow.</p>
+    <h2 class="fade-in">Try it.</h2>
+    <p class="cta-sub fade-in">Install, point brz inspect at a URL, and see what comes back.</p>
 
     <div class="install-group fade-in" style="margin-bottom: 28px; animation: none; opacity: 1;">
       <div class="install-tabs">
