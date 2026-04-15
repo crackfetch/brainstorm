@@ -1,0 +1,1503 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>brz - YAML-driven browser automation for the terminal</title>
+<meta name="description" content="brz is a single-binary CLI that drives a real Chrome browser from YAML workflow definitions. Inspect pages, automate workflows, verify results. Built for developers and LLM agents.">
+<meta name="keywords" content="browser automation, CLI, YAML, headless Chrome, web scraping, LLM agent, devtools, Go, workflow automation, stealth browser, headless browser automation">
+<meta property="og:title" content="brz - Browser automation for the terminal">
+<meta property="og:description" content="YAML-driven browser automation. One binary. Zero dependencies. Built for developers and LLM agents.">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>▸</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Space+Mono:ital,wght@0,400;0,700;1,400&family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #06060e;
+    --surface: #0c0c18;
+    --surface-alt: #10101f;
+    --border: #1a1a30;
+    --border-bright: #252545;
+    --text: #d4d4e8;
+    --text-bright: #eeeefc;
+    --muted: #5e5e80;
+    --cyan: #00ffee;
+    --cyan-dim: rgba(0, 255, 238, 0.06);
+    --cyan-mid: rgba(0, 255, 238, 0.15);
+    --magenta: #ff0080;
+    --magenta-dim: rgba(255, 0, 128, 0.06);
+    --magenta-mid: rgba(255, 0, 128, 0.12);
+    --lime: #39ff14;
+    --yellow: #ffe600;
+    --pink: #ff6ec7;
+    --orange: #ff6b35;
+    --font-pixel: 'Press Start 2P', monospace;
+    --font-mono: 'Space Mono', 'SF Mono', monospace;
+    --font-sans: 'DM Sans', system-ui, sans-serif;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+
+  /* === PERSPECTIVE GRID === */
+  .grid-bg {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    overflow: hidden;
+    pointer-events: none;
+    z-index: 0;
+  }
+  .grid-bg canvas { width: 100%; height: 100%; }
+
+  /* === SCANLINES (heavier) === */
+  body::after {
+    content: '';
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0, 0, 0, 0.08) 2px,
+      rgba(0, 0, 0, 0.08) 4px
+    );
+    pointer-events: none;
+    z-index: 9999;
+  }
+
+  /* === CRT VIGNETTE === */
+  .crt-vignette {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: radial-gradient(ellipse at center, transparent 60%, rgba(0,0,0,0.4) 100%);
+    pointer-events: none;
+    z-index: 9998;
+  }
+
+  /* === SCROLLING TICKER === */
+  .ticker {
+    background: var(--magenta);
+    overflow: hidden;
+    white-space: nowrap;
+    position: relative;
+    z-index: 101;
+  }
+  .ticker-inner {
+    display: inline-block;
+    animation: tickerScroll 30s linear infinite;
+    font-family: var(--font-pixel);
+    font-size: 8px;
+    color: var(--bg);
+    padding: 6px 0;
+    letter-spacing: 0.05em;
+  }
+  @keyframes tickerScroll {
+    0% { transform: translateX(0); }
+    100% { transform: translateX(-50%); }
+  }
+
+  /* === CHROMATIC ABERRATION (text-shadow based) === */
+  .chromatic {
+    animation: chromaText 4s ease-in-out infinite alternate;
+  }
+  @keyframes chromaText {
+    0% { text-shadow: -2px -1px 0 rgba(0, 255, 238, 0.25), 2px 1px 0 rgba(255, 0, 128, 0.2); }
+    25% { text-shadow: -1px 1px 0 rgba(0, 255, 238, 0.3), 1px -1px 0 rgba(255, 0, 128, 0.15); }
+    50% { text-shadow: 2px 0 0 rgba(0, 255, 238, 0.2), -2px 0 0 rgba(255, 0, 128, 0.25); }
+    75% { text-shadow: 1px -1px 0 rgba(0, 255, 238, 0.15), -1px 1px 0 rgba(255, 0, 128, 0.3); }
+    100% { text-shadow: -2px 1px 0 rgba(0, 255, 238, 0.25), 2px -1px 0 rgba(255, 0, 128, 0.2); }
+  }
+
+  /* === GLITCH LOGO === */
+  .nav-logo {
+    position: relative;
+  }
+  .nav-logo:hover {
+    animation: glitch 0.3s steps(2) infinite;
+  }
+  @keyframes glitch {
+    0% { text-shadow: 2px 0 var(--magenta), -2px 0 var(--cyan); }
+    25% { text-shadow: -2px 0 var(--magenta), 2px 0 var(--cyan); }
+    50% { text-shadow: 2px -1px var(--magenta), -2px 1px var(--cyan); }
+    75% { text-shadow: -1px 2px var(--magenta), 1px -2px var(--cyan); }
+    100% { text-shadow: 2px 0 var(--magenta), -2px 0 var(--cyan); }
+  }
+
+  /* === EQ VISUALIZER === */
+  .eq-bars {
+    display: flex;
+    gap: 3px;
+    align-items: flex-end;
+    height: 32px;
+    justify-content: center;
+    margin: 20px auto 0;
+    width: fit-content;
+  }
+  .eq-bar {
+    width: 4px;
+    background: var(--cyan);
+    animation: eqPulse var(--dur) steps(8) infinite alternate;
+    box-shadow: 0 0 6px rgba(0, 255, 238, 0.3);
+  }
+  @keyframes eqPulse {
+    0% { height: var(--h1); }
+    50% { height: var(--h2); }
+    100% { height: var(--h3); }
+  }
+
+  /* === PIXEL CORNER ORNAMENTS === */
+  .pixel-corners {
+    position: relative;
+  }
+  .pixel-corners::before,
+  .pixel-corners::after {
+    content: '';
+    position: absolute;
+    width: 8px; height: 8px;
+  }
+  .pixel-corners::before {
+    top: -1px; left: -1px;
+    border-top: 2px solid var(--cyan);
+    border-left: 2px solid var(--cyan);
+  }
+  .pixel-corners::after {
+    bottom: -1px; right: -1px;
+    border-bottom: 2px solid var(--magenta);
+    border-right: 2px solid var(--magenta);
+  }
+
+  .container {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 0 24px;
+    position: relative;
+    z-index: 1;
+  }
+
+  /* === NAV === */
+  nav {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: rgba(6, 6, 14, 0.9);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border-bottom: 2px solid var(--border);
+  }
+  .nav-inner {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 0 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 52px;
+  }
+  .nav-logo {
+    font-family: var(--font-pixel);
+    font-size: 14px;
+    color: var(--cyan);
+    text-decoration: none;
+    text-shadow: 0 0 10px rgba(0, 255, 238, 0.5);
+    image-rendering: pixelated;
+  }
+  .nav-links {
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    list-style: none;
+  }
+  .nav-links a {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--muted);
+    text-decoration: none;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    transition: color 0.15s;
+  }
+  .nav-links a:hover { color: var(--cyan); text-shadow: 0 0 8px rgba(0, 255, 238, 0.3); }
+  .nav-gh {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 12px;
+    border: 2px solid var(--border);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text);
+    text-decoration: none;
+    transition: border-color 0.15s, color 0.15s;
+  }
+  .nav-gh:hover { border-color: var(--cyan); color: var(--cyan); }
+  .nav-gh svg { width: 14px; height: 14px; fill: currentColor; }
+
+  /* === HERO === */
+  .hero {
+    padding: 80px 0 60px;
+    text-align: center;
+    position: relative;
+  }
+
+  .hero-boot {
+    font-family: var(--font-pixel);
+    font-size: 9px;
+    color: var(--muted);
+    margin-bottom: 12px;
+    letter-spacing: 0.02em;
+    opacity: 0;
+    animation: bootIn 0.4s steps(4) 0.2s forwards;
+  }
+  .hero-boot .ready { color: var(--lime); }
+
+  /* PS1 loading bar */
+  .hero-loader {
+    width: 200px;
+    height: 4px;
+    background: var(--border);
+    margin: 0 auto 40px;
+    position: relative;
+    overflow: hidden;
+    image-rendering: pixelated;
+  }
+  .hero-loader::after {
+    content: '';
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    background: linear-gradient(90deg, var(--cyan), var(--magenta));
+    animation: loadBar 1.2s steps(20) 0.3s forwards;
+    transform: scaleX(0);
+    transform-origin: left;
+  }
+
+  @keyframes loadBar {
+    to { transform: scaleX(1); }
+  }
+  @keyframes bootIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  .hero h1 {
+    font-family: var(--font-sans);
+    font-size: clamp(36px, 6.5vw, 68px);
+    font-weight: 700;
+    line-height: 1.05;
+    letter-spacing: -0.04em;
+    color: var(--text-bright);
+    margin-bottom: 24px;
+    opacity: 0;
+    animation: fadeUp 0.5s ease-out 1.5s forwards;
+  }
+  .hero h1 .accent {
+    color: var(--cyan);
+    text-shadow: 0 0 30px rgba(0, 255, 238, 0.3), 0 0 60px rgba(0, 255, 238, 0.1);
+  }
+  .hero h1 .accent-m {
+    color: var(--magenta);
+    text-shadow: 0 0 30px rgba(255, 0, 128, 0.3), 0 0 60px rgba(255, 0, 128, 0.1);
+  }
+
+  .hero-sub {
+    font-family: var(--font-mono);
+    font-size: 14px;
+    color: var(--muted);
+    max-width: 540px;
+    margin: 0 auto 36px;
+    line-height: 1.8;
+    opacity: 0;
+    animation: fadeUp 0.5s ease-out 1.7s forwards;
+  }
+
+  .hero-actions {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    flex-wrap: wrap;
+    margin-bottom: 28px;
+    opacity: 0;
+    animation: fadeUp 0.5s ease-out 1.9s forwards;
+  }
+
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(12px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  /* === BUTTONS === */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 20px;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    border: none;
+    text-decoration: none;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    transition: all 0.15s;
+    position: relative;
+  }
+  .btn-primary {
+    background: var(--cyan);
+    color: var(--bg);
+    box-shadow: 0 0 20px rgba(0, 255, 238, 0.2), inset 0 -2px 0 rgba(0, 0, 0, 0.2);
+  }
+  .btn-primary:hover {
+    box-shadow: 0 0 40px rgba(0, 255, 238, 0.4), inset 0 -2px 0 rgba(0, 0, 0, 0.2);
+    transform: translateY(-1px);
+  }
+  .btn-ghost {
+    background: transparent;
+    color: var(--text);
+    border: 2px solid var(--border);
+  }
+  .btn-ghost:hover {
+    border-color: var(--magenta);
+    color: var(--magenta);
+    box-shadow: 0 0 20px rgba(255, 0, 128, 0.15);
+  }
+
+  /* === INSTALL === */
+  .install-bar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    max-width: 520px;
+    margin: 0 auto;
+    background: var(--surface);
+    border: 2px solid var(--border);
+    padding: 12px 20px;
+    font-family: var(--font-mono);
+    font-size: 14px;
+    cursor: pointer;
+    transition: border-color 0.15s;
+    opacity: 0;
+    animation: fadeUp 0.5s ease-out 2.1s forwards;
+  }
+  .install-bar:hover { border-color: var(--cyan); }
+  .install-bar .prompt { color: var(--lime); }
+  .install-bar .copy-hint {
+    font-family: var(--font-pixel);
+    color: var(--muted);
+    font-size: 7px;
+    margin-left: auto;
+    text-transform: uppercase;
+  }
+  .install-bar:hover .copy-hint { color: var(--cyan); }
+
+  /* === HERO TERMINAL === */
+  .hero-terminal {
+    max-width: 700px;
+    margin: 40px auto 0;
+    opacity: 0;
+    animation: fadeUp 0.6s ease-out 2.3s forwards;
+  }
+
+  /* === CODE BLOCKS === */
+  .code-block {
+    background: var(--surface);
+    border: 2px solid var(--border);
+    overflow: hidden;
+    position: relative;
+  }
+  .code-block::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, var(--cyan), var(--magenta), var(--cyan));
+    background-size: 200% 100%;
+    animation: gradientSlide 3s linear infinite;
+  }
+  @keyframes gradientSlide {
+    0% { background-position: 0% 0%; }
+    100% { background-position: 200% 0%; }
+  }
+
+  .code-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-alt);
+  }
+  .code-header-title {
+    font-family: var(--font-pixel);
+    font-size: 8px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-left: 10px;
+  }
+  .code-dots {
+    display: flex;
+    gap: 6px;
+  }
+  .code-dot {
+    width: 8px; height: 8px;
+    background: var(--border-bright);
+  }
+  .code-dot:first-child { background: #ff5f57; }
+  .code-dot:nth-child(2) { background: #febc2e; }
+  .code-dot:nth-child(3) { background: #28c840; }
+
+  .code-body {
+    padding: 18px 20px;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    line-height: 1.9;
+    overflow-x: auto;
+  }
+  .code-body .prompt { color: var(--lime); }
+  .code-body .cmd { color: var(--text-bright); font-weight: 700; }
+  .code-body .flag { color: var(--cyan); }
+  .code-body .str { color: var(--yellow); }
+  .code-body .comment { color: var(--muted); }
+  .code-body .key { color: var(--cyan); }
+  .code-body .val { color: var(--yellow); }
+  .code-body .bool { color: var(--lime); }
+  .code-body .num { color: var(--pink); }
+  .code-body .output { color: var(--muted); }
+
+  /* Blinking cursor */
+  .cursor {
+    display: inline-block;
+    width: 8px;
+    height: 15px;
+    background: var(--cyan);
+    animation: blink 1s steps(1) infinite;
+    vertical-align: text-bottom;
+    margin-left: 2px;
+  }
+  @keyframes blink {
+    50% { opacity: 0; }
+  }
+
+  .json-block {
+    padding: 14px 20px;
+    border-top: 1px solid var(--border);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.8;
+  }
+
+  /* === SECTIONS === */
+  section {
+    padding: 100px 0;
+    position: relative;
+    z-index: 1;
+  }
+
+  .section-label {
+    font-family: var(--font-pixel);
+    font-size: 9px;
+    color: var(--magenta);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-bottom: 20px;
+    text-shadow: 0 0 10px rgba(255, 0, 128, 0.3);
+  }
+
+  .section-title {
+    font-family: var(--font-sans);
+    font-size: clamp(26px, 4vw, 40px);
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    color: var(--text-bright);
+    margin-bottom: 16px;
+    line-height: 1.15;
+  }
+
+  .section-desc {
+    font-family: var(--font-mono);
+    font-size: 14px;
+    color: var(--muted);
+    max-width: 560px;
+    line-height: 1.8;
+    margin-bottom: 48px;
+  }
+
+  /* === DIVIDERS === */
+  .divider {
+    border: none;
+    height: 2px;
+    background: var(--border);
+    position: relative;
+  }
+  .divider::after {
+    content: '';
+    position: absolute;
+    top: 0; left: 30%; right: 30%;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--magenta), transparent);
+    opacity: 0.4;
+  }
+
+  /* === HOW IT WORKS === */
+  .flow-steps {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 2px;
+    background: var(--border);
+    margin-bottom: 48px;
+  }
+  .flow-step {
+    background: var(--surface);
+    padding: 28px 24px;
+    position: relative;
+  }
+  .flow-step::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0;
+    width: 3px; height: 100%;
+    background: var(--cyan);
+    opacity: 0;
+    transition: opacity 0.2s;
+  }
+  .flow-step:hover::before { opacity: 1; }
+
+  .flow-step-num {
+    font-family: var(--font-pixel);
+    font-size: 20px;
+    color: var(--border-bright);
+    line-height: 1;
+    margin-bottom: 16px;
+  }
+  .flow-step h3 {
+    font-family: var(--font-pixel);
+    font-size: 10px;
+    color: var(--cyan);
+    margin-bottom: 12px;
+    text-shadow: 0 0 8px rgba(0, 255, 238, 0.3);
+  }
+  .flow-step p {
+    font-size: 14px;
+    color: var(--muted);
+    line-height: 1.6;
+  }
+  .flow-step code {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    background: var(--bg);
+    padding: 2px 6px;
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+
+  /* === COMMAND CARDS === */
+  .cmd-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2px;
+    background: var(--border);
+  }
+  .cmd-card {
+    background: var(--surface);
+    padding: 24px;
+    transition: background 0.15s;
+    position: relative;
+  }
+  .cmd-card::after {
+    content: '';
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    height: 2px;
+    background: var(--cyan);
+    transform: scaleX(0);
+    transition: transform 0.25s;
+  }
+  .cmd-card:hover::after { transform: scaleX(1); }
+  .cmd-card:hover { background: var(--surface-alt); }
+  .cmd-card h3 {
+    font-family: var(--font-mono);
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--text-bright);
+    margin-bottom: 8px;
+  }
+  .cmd-card h3 span { color: var(--cyan); }
+  .cmd-card .cmd-usage {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 10px;
+    padding: 6px 10px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    overflow-x: auto;
+  }
+  .cmd-card p {
+    font-size: 13px;
+    color: var(--muted);
+    line-height: 1.6;
+  }
+  .cmd-flags {
+    margin-top: 10px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .cmd-flag {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    padding: 2px 6px;
+    background: var(--cyan-dim);
+    color: var(--cyan);
+    border: 1px solid rgba(0, 255, 238, 0.15);
+  }
+
+  /* === EXIT CODES === */
+  .exit-codes {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr 1fr;
+    gap: 2px;
+    background: var(--border);
+    margin-top: 32px;
+  }
+  .exit-code {
+    background: var(--surface);
+    padding: 20px;
+    text-align: center;
+  }
+  .exit-code-num {
+    font-family: var(--font-pixel);
+    font-size: 24px;
+    margin-bottom: 8px;
+  }
+  .exit-code-num.c0 { color: var(--lime); text-shadow: 0 0 10px rgba(57, 255, 20, 0.3); }
+  .exit-code-num.c1 { color: var(--yellow); text-shadow: 0 0 10px rgba(255, 230, 0, 0.3); }
+  .exit-code-num.c2 { color: var(--magenta); text-shadow: 0 0 10px rgba(255, 0, 128, 0.3); }
+  .exit-code-num.c3 { color: #ff3333; text-shadow: 0 0 10px rgba(255, 51, 51, 0.3); }
+  .exit-code-label {
+    font-family: var(--font-pixel);
+    font-size: 7px;
+    color: var(--muted);
+    text-transform: uppercase;
+  }
+
+  /* === FEATURES === */
+  .feature-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2px;
+    background: var(--border);
+  }
+  .feature-card {
+    background: var(--surface);
+    padding: 28px;
+    transition: background 0.15s;
+    position: relative;
+  }
+  .feature-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0;
+    width: 2px; height: 100%;
+    background: var(--magenta);
+    opacity: 0;
+    transition: opacity 0.2s;
+  }
+  .feature-card:hover { background: var(--surface-alt); }
+  .feature-card:hover::before { opacity: 1; }
+  .feature-card h3 {
+    font-family: var(--font-pixel);
+    font-size: 9px;
+    color: var(--text-bright);
+    margin-bottom: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+  }
+  .feature-card p {
+    font-size: 14px;
+    color: var(--muted);
+    line-height: 1.6;
+  }
+
+  /* === YAML SECTION === */
+  .yaml-section {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 32px;
+    align-items: start;
+  }
+  .yaml-info h3 {
+    font-family: var(--font-sans);
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--text-bright);
+    margin-bottom: 16px;
+    letter-spacing: -0.02em;
+  }
+  .yaml-info p {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: var(--muted);
+    line-height: 1.8;
+    margin-bottom: 16px;
+  }
+
+  /* Step types table */
+  .steps-table-wrap {
+    background: var(--surface);
+    border: 2px solid var(--border);
+    overflow: hidden;
+  }
+  .steps-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: var(--font-mono);
+    font-size: 12px;
+  }
+  .steps-table th {
+    text-align: left;
+    padding: 10px 14px;
+    color: var(--muted);
+    font-weight: 400;
+    border-bottom: 2px solid var(--border);
+    font-family: var(--font-pixel);
+    font-size: 7px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+  .steps-table td {
+    padding: 8px 14px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text);
+  }
+  .steps-table tr:hover { background: var(--surface-alt); }
+  .steps-table td:first-child { color: var(--cyan); font-weight: 700; }
+  .steps-table td:last-child { color: var(--muted); }
+
+  /* === AGENT SECTION === */
+  .agent-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 32px;
+    align-items: start;
+  }
+  .agent-cards { display: flex; flex-direction: column; gap: 2px; }
+  .agent-card {
+    background: var(--surface);
+    border-left: 3px solid var(--cyan);
+    padding: 20px 24px;
+  }
+  .agent-card h3 {
+    font-family: var(--font-pixel);
+    font-size: 8px;
+    color: var(--cyan);
+    margin-bottom: 10px;
+    text-transform: uppercase;
+  }
+  .agent-card p {
+    font-size: 13px;
+    color: var(--muted);
+    line-height: 1.6;
+  }
+  .agent-card code {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    background: var(--bg);
+    padding: 1px 5px;
+    color: var(--cyan);
+    border: 1px solid var(--border);
+  }
+
+  /* === CTA === */
+  .cta-section {
+    text-align: center;
+    padding: 120px 0;
+    position: relative;
+  }
+  .cta-section h2 {
+    font-family: var(--font-sans);
+    font-size: clamp(32px, 5vw, 52px);
+    font-weight: 700;
+    color: var(--text-bright);
+    letter-spacing: -0.03em;
+    margin-bottom: 12px;
+  }
+  .cta-section .cta-sub {
+    font-family: var(--font-mono);
+    font-size: 14px;
+    color: var(--muted);
+    margin-bottom: 36px;
+    max-width: 420px;
+    margin-left: auto;
+    margin-right: auto;
+    line-height: 1.7;
+  }
+
+  /* === FOOTER === */
+  footer {
+    border-top: 2px solid var(--border);
+    padding: 40px 0;
+    text-align: center;
+    position: relative;
+    z-index: 1;
+  }
+  .footer-ascii {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--border-bright);
+    line-height: 1.3;
+    margin-bottom: 20px;
+    white-space: pre;
+  }
+  .footer-links {
+    display: flex;
+    gap: 24px;
+    justify-content: center;
+    margin-bottom: 16px;
+    list-style: none;
+  }
+  .footer-links a {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--muted);
+    text-decoration: none;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    transition: color 0.15s;
+  }
+  .footer-links a:hover { color: var(--cyan); }
+  .footer-copy {
+    font-family: var(--font-pixel);
+    font-size: 7px;
+    color: var(--muted);
+    letter-spacing: 0.05em;
+  }
+
+  /* === GLOW EFFECTS === */
+  .glow-orb {
+    position: absolute;
+    border-radius: 50%;
+    pointer-events: none;
+    z-index: 0;
+    filter: blur(80px);
+  }
+
+  /* === SCROLL ANIMATIONS === */
+  .fade-in {
+    opacity: 0;
+    transform: translateY(20px);
+    transition: opacity 0.4s ease-out, transform 0.4s ease-out;
+  }
+  .fade-in.visible {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  /* === RESPONSIVE === */
+  @media (max-width: 768px) {
+    .nav-links { gap: 14px; }
+    .flow-steps { grid-template-columns: 1fr; }
+    .cmd-grid { grid-template-columns: 1fr; }
+    .feature-grid { grid-template-columns: 1fr; }
+    .yaml-section { grid-template-columns: 1fr; }
+    .agent-grid { grid-template-columns: 1fr; }
+    .exit-codes { grid-template-columns: 1fr 1fr; }
+    section { padding: 64px 0; }
+  }
+  @media (max-width: 480px) {
+    .nav-links a:not(.nav-gh) { display: none; }
+    .hero { padding: 48px 0 36px; }
+    .exit-codes { grid-template-columns: 1fr 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<!-- CRT VIGNETTE -->
+<div class="crt-vignette"></div>
+
+<!-- PERSPECTIVE GRID BACKGROUND -->
+<div class="grid-bg">
+  <canvas id="gridCanvas"></canvas>
+</div>
+
+<!-- TICKER -->
+<div class="ticker">
+  <div class="ticker-inner">
+    YAML-DRIVEN BROWSER AUTOMATION &nbsp;&nbsp;/&nbsp;&nbsp; STEALTH-HARDENED &nbsp;&nbsp;/&nbsp;&nbsp; JSON OUTPUT &nbsp;&nbsp;/&nbsp;&nbsp; BUILT FOR LLM AGENTS &nbsp;&nbsp;/&nbsp;&nbsp; ZERO DEPENDENCIES &nbsp;&nbsp;/&nbsp;&nbsp; SESSION PERSISTENCE &nbsp;&nbsp;/&nbsp;&nbsp; 12 STEP TYPES &nbsp;&nbsp;/&nbsp;&nbsp; 9 EVAL ASSERTIONS &nbsp;&nbsp;/&nbsp;&nbsp; SEMANTIC EXIT CODES &nbsp;&nbsp;/&nbsp;&nbsp; PUBLIC GO API &nbsp;&nbsp;/&nbsp;&nbsp;
+    YAML-DRIVEN BROWSER AUTOMATION &nbsp;&nbsp;/&nbsp;&nbsp; STEALTH-HARDENED &nbsp;&nbsp;/&nbsp;&nbsp; JSON OUTPUT &nbsp;&nbsp;/&nbsp;&nbsp; BUILT FOR LLM AGENTS &nbsp;&nbsp;/&nbsp;&nbsp; ZERO DEPENDENCIES &nbsp;&nbsp;/&nbsp;&nbsp; SESSION PERSISTENCE &nbsp;&nbsp;/&nbsp;&nbsp; 12 STEP TYPES &nbsp;&nbsp;/&nbsp;&nbsp; 9 EVAL ASSERTIONS &nbsp;&nbsp;/&nbsp;&nbsp; SEMANTIC EXIT CODES &nbsp;&nbsp;/&nbsp;&nbsp; PUBLIC GO API &nbsp;&nbsp;/&nbsp;&nbsp;
+  </div>
+</div>
+
+<!-- NAV -->
+<nav>
+  <div class="nav-inner">
+    <a href="#" class="nav-logo">BRZ</a>
+    <ul class="nav-links">
+      <li><a href="#how-it-works">How it works</a></li>
+      <li><a href="#commands">Commands</a></li>
+      <li><a href="#workflows">Workflows</a></li>
+      <li><a href="#features">Features</a></li>
+      <li>
+        <a href="https://github.com/crackfetch/brainstorm" class="nav-gh" target="_blank" rel="noopener">
+          <svg viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+          GitHub
+        </a>
+      </li>
+    </ul>
+  </div>
+</nav>
+
+<!-- HERO -->
+<header class="hero">
+  <div class="container">
+    <div class="glow-orb" style="width: 500px; height: 500px; background: rgba(0, 255, 238, 0.07); top: -200px; left: -150px;"></div>
+    <div class="glow-orb" style="width: 400px; height: 400px; background: rgba(255, 0, 128, 0.05); top: -100px; right: -100px;"></div>
+
+    <div class="hero-boot" style="animation-delay: 0.1s;">
+      > MEMORY CHECK ... 64MB OK
+    </div>
+    <div class="hero-boot" style="animation-delay: 0.3s;">
+      > LOADING CHROME DRIVER ... <span class="ready">FOUND</span>
+    </div>
+    <div class="hero-boot" style="animation-delay: 0.5s;">
+      > STEALTH MODULE ... <span class="ready">INJECTED</span>
+    </div>
+    <div class="hero-boot" style="animation-delay: 0.7s;">
+      > SYSTEM.INIT // BRZ V0.9.1 // <span class="ready">STATUS: ONLINE</span>
+    </div>
+    <div class="hero-loader"></div>
+
+    <h1 class="chromatic">Browser automation<br>for <span class="accent">the terminal</span><span class="accent-m">.</span></h1>
+
+    <p class="hero-sub">
+      YAML-driven. Stealth-hardened. JSON output.<br>
+      One binary, zero dependencies.<br>
+      Built for developers and LLM agents.
+    </p>
+
+    <div class="hero-actions">
+      <a href="#how-it-works" class="btn btn-primary">Get Started</a>
+      <a href="https://github.com/crackfetch/brainstorm" class="btn btn-ghost" target="_blank" rel="noopener">View Source</a>
+    </div>
+
+    <div class="install-bar" onclick="copyInstall(this)">
+      <span class="prompt">$</span>
+      <span>go install github.com/crackfetch/brz@latest</span>
+      <span class="copy-hint">Copy</span>
+    </div>
+
+    <div class="eq-bars">
+      <div class="eq-bar" style="--dur: 0.4s; --h1: 8px; --h2: 24px; --h3: 12px;"></div>
+      <div class="eq-bar" style="--dur: 0.5s; --h1: 16px; --h2: 8px; --h3: 28px;"></div>
+      <div class="eq-bar" style="--dur: 0.35s; --h1: 24px; --h2: 12px; --h3: 20px;"></div>
+      <div class="eq-bar" style="--dur: 0.55s; --h1: 12px; --h2: 32px; --h3: 8px;"></div>
+      <div class="eq-bar" style="--dur: 0.45s; --h1: 20px; --h2: 8px; --h3: 24px;"></div>
+      <div class="eq-bar" style="--dur: 0.3s; --h1: 8px; --h2: 20px; --h3: 32px;"></div>
+      <div class="eq-bar" style="--dur: 0.5s; --h1: 28px; --h2: 12px; --h3: 16px;"></div>
+      <div class="eq-bar" style="--dur: 0.4s; --h1: 16px; --h2: 28px; --h3: 8px;"></div>
+      <div class="eq-bar" style="--dur: 0.55s; --h1: 8px; --h2: 16px; --h3: 24px;"></div>
+      <div class="eq-bar" style="--dur: 0.35s; --h1: 24px; --h2: 8px; --h3: 20px;"></div>
+      <div class="eq-bar" style="--dur: 0.45s; --h1: 12px; --h2: 24px; --h3: 8px;"></div>
+      <div class="eq-bar" style="--dur: 0.5s; --h1: 20px; --h2: 12px; --h3: 28px;"></div>
+      <div class="eq-bar" style="--dur: 0.4s; --h1: 8px; --h2: 20px; --h3: 12px;"></div>
+      <div class="eq-bar" style="--dur: 0.3s; --h1: 16px; --h2: 8px; --h3: 24px;"></div>
+      <div class="eq-bar" style="--dur: 0.55s; --h1: 24px; --h2: 16px; --h3: 8px;"></div>
+      <div class="eq-bar" style="--dur: 0.45s; --h1: 8px; --h2: 28px; --h3: 16px;"></div>
+    </div>
+
+    <div class="hero-terminal">
+      <div class="code-block pixel-corners">
+        <div class="code-header">
+          <div class="code-dots">
+            <span class="code-dot"></span>
+            <span class="code-dot"></span>
+            <span class="code-dot"></span>
+          </div>
+          <span class="code-header-title">Terminal</span>
+        </div>
+        <div class="code-body">
+          <div><span class="comment"># Discover what's on any page</span></div>
+          <div><span class="prompt">$</span> <span class="cmd">brz inspect</span> <span class="str">https://app.example.com/login</span> <span class="flag">--compact</span><span class="cursor"></span></div>
+        </div>
+        <div class="json-block">
+          <div>{</div>
+          <div>  <span class="key">"ok"</span>: <span class="bool">true</span>,</div>
+          <div>  <span class="key">"url"</span>: <span class="val">"https://app.example.com/login"</span>,</div>
+          <div>  <span class="key">"elements"</span>: [</div>
+          <div>    { <span class="key">"selector"</span>: <span class="val">"input#email"</span>, <span class="key">"tag"</span>: <span class="val">"input"</span>, <span class="key">"type"</span>: <span class="val">"email"</span> },</div>
+          <div>    { <span class="key">"selector"</span>: <span class="val">"input#password"</span>, <span class="key">"tag"</span>: <span class="val">"input"</span>, <span class="key">"type"</span>: <span class="val">"password"</span> },</div>
+          <div>    { <span class="key">"selector"</span>: <span class="val">"button.submit"</span>, <span class="key">"tag"</span>: <span class="val">"button"</span>, <span class="key">"text"</span>: <span class="val">"Sign In"</span> }</div>
+          <div>  ],</div>
+          <div>  <span class="key">"duration_ms"</span>: <span class="num">1247</span></div>
+          <div>}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<hr class="divider">
+
+<!-- HOW IT WORKS -->
+<section id="how-it-works">
+  <div class="container">
+    <div class="section-label fade-in">// How it works</div>
+    <h2 class="section-title fade-in">Discover. Automate. Verify.</h2>
+    <p class="section-desc fade-in">Three steps. No SDK, no framework, no site-specific code. Every web automation starts the same way.</p>
+
+    <div class="flow-steps fade-in pixel-corners">
+      <div class="flow-step">
+        <div class="flow-step-num">01</div>
+        <h3>Inspect</h3>
+        <p>Point <code>brz inspect</code> at any URL. Get back every interactive element with its CSS selector, tag, type, and name. Filter with <code>--tag</code> and <code>--name</code>. Pipe to <code>jq</code>.</p>
+      </div>
+      <div class="flow-step">
+        <div class="flow-step-num">02</div>
+        <h3>Write YAML</h3>
+        <p>Define your workflow as a YAML file. Steps are declarative: fill, click, select, wait, download, upload, eval. No imperative code. Validate with <code>brz validate</code>.</p>
+      </div>
+      <div class="flow-step">
+        <div class="flow-step-num">03</div>
+        <h3>Run</h3>
+        <p>Execute with <code>brz run</code>. Chain multiple actions in one browser session. Get JSON output with download paths, timing, and eval results.</p>
+      </div>
+    </div>
+
+    <div class="code-block fade-in">
+      <div class="code-header">
+        <div class="code-dots"><span class="code-dot"></span><span class="code-dot"></span><span class="code-dot"></span></div>
+        <span class="code-header-title">The Full Loop</span>
+      </div>
+      <div class="code-body">
+        <div><span class="comment"># 1. Discover selectors</span></div>
+        <div><span class="prompt">$</span> <span class="cmd">brz inspect</span> <span class="str">https://app.example.com/login</span> <span class="flag">--tag</span> <span class="str">input,button</span> <span class="flag">--compact</span></div>
+        <div>&nbsp;</div>
+        <div><span class="comment"># 2. Write the workflow (login.yaml)</span></div>
+        <div><span class="comment"># 3. Validate it</span></div>
+        <div><span class="prompt">$</span> <span class="cmd">brz validate</span> <span class="str">login.yaml</span></div>
+        <div><span class="output">{"ok":true,"actions":2,"total_steps":7}</span></div>
+        <div>&nbsp;</div>
+        <div><span class="comment"># 4. Run it</span></div>
+        <div><span class="prompt">$</span> <span class="cmd">brz run</span> <span class="str">login.yaml</span> <span class="cmd">login,export</span> <span class="flag">--env</span> <span class="str">EMAIL=dev@co.com</span></div>
+        <div><span class="output">{"ok":true,"action":"export","download":"/tmp/report.csv","duration_ms":3200}</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<hr class="divider">
+
+<!-- COMMANDS -->
+<section id="commands">
+  <div class="container">
+    <div class="section-label fade-in">// Commands</div>
+    <h2 class="section-title fade-in">Eight commands. That's the whole CLI.</h2>
+    <p class="section-desc fade-in">Unix philosophy: each command does one thing. Compose them with pipes, scripts, and your LLM agent's tool-use loop.</p>
+
+    <div class="cmd-grid fade-in">
+      <div class="cmd-card">
+        <h3>brz <span>inspect</span></h3>
+        <div class="cmd-usage">brz inspect &lt;url&gt; [flags]</div>
+        <p>List every interactive element on a page with its CSS selector. The starting point for any automation.</p>
+        <div class="cmd-flags">
+          <span class="cmd-flag">--compact</span>
+          <span class="cmd-flag">--tag</span>
+          <span class="cmd-flag">--name</span>
+          <span class="cmd-flag">--screenshot</span>
+          <span class="cmd-flag">--eval</span>
+        </div>
+      </div>
+      <div class="cmd-card">
+        <h3>brz <span>run</span></h3>
+        <div class="cmd-usage">brz run &lt;wf.yaml&gt; &lt;action&gt; [flags]</div>
+        <p>Execute a YAML workflow action against a real Chrome browser. Chain actions with commas.</p>
+        <div class="cmd-flags">
+          <span class="cmd-flag">--env KEY=VAL</span>
+          <span class="cmd-flag">--dry-run</span>
+          <span class="cmd-flag">--headed</span>
+          <span class="cmd-flag">--debug</span>
+        </div>
+      </div>
+      <div class="cmd-card">
+        <h3>brz <span>screenshot</span></h3>
+        <div class="cmd-usage">brz screenshot &lt;url&gt; [--output file]</div>
+        <p>Capture a full-page screenshot. Returns path + size as JSON.</p>
+        <div class="cmd-flags"><span class="cmd-flag">--output</span></div>
+      </div>
+      <div class="cmd-card">
+        <h3>brz <span>eval</span></h3>
+        <div class="cmd-usage">brz eval &lt;url&gt; &lt;js-expr&gt;</div>
+        <p>Execute JavaScript on any page. Promises auto-awaited.</p>
+        <div class="cmd-flags"><span class="cmd-flag">--json</span></div>
+      </div>
+      <div class="cmd-card">
+        <h3>brz <span>validate</span></h3>
+        <div class="cmd-usage">brz validate &lt;workflow.yaml&gt;</div>
+        <p>Check YAML syntax. Count actions and steps. Fast feedback.</p>
+        <div class="cmd-flags"><span class="cmd-flag">--json</span></div>
+      </div>
+      <div class="cmd-card">
+        <h3>brz <span>actions</span></h3>
+        <div class="cmd-usage">brz actions &lt;workflow.yaml&gt;</div>
+        <p>List all actions in a workflow with URLs and step counts.</p>
+        <div class="cmd-flags"><span class="cmd-flag">--json</span></div>
+      </div>
+      <div class="cmd-card">
+        <h3>brz <span>prompt</span></h3>
+        <div class="cmd-usage">brz prompt</div>
+        <p>Print the embedded LLM agent prompt. Copy into your agent's system prompt.</p>
+      </div>
+      <div class="cmd-card">
+        <h3>brz <span>version</span></h3>
+        <div class="cmd-usage">brz version</div>
+        <p>Print the version. That's it.</p>
+      </div>
+    </div>
+
+    <div class="exit-codes fade-in pixel-corners">
+      <div class="exit-code"><div class="exit-code-num c0">0</div><div class="exit-code-label">Success</div></div>
+      <div class="exit-code"><div class="exit-code-num c1">1</div><div class="exit-code-label">Step Failed</div></div>
+      <div class="exit-code"><div class="exit-code-num c2">2</div><div class="exit-code-label">Bad Workflow</div></div>
+      <div class="exit-code"><div class="exit-code-num c3">3</div><div class="exit-code-label">Browser Error</div></div>
+    </div>
+  </div>
+</section>
+
+<hr class="divider">
+
+<!-- WORKFLOWS -->
+<section id="workflows">
+  <div class="container">
+    <div class="section-label fade-in">// Workflows</div>
+    <h2 class="section-title fade-in">YAML in. Browser out.</h2>
+    <p class="section-desc fade-in">No site-specific code in the binary. What you automate is defined entirely by your workflow file. Simple enough to write by hand, structured enough for agents to generate.</p>
+
+    <div class="yaml-section fade-in">
+      <div class="yaml-info">
+        <h3>12 step types cover every interaction</h3>
+        <p>Each step is a single YAML line. Selectors come from <code style="font-family: var(--font-mono); font-size: 12px; background: var(--bg); padding: 2px 5px; color: var(--cyan); border: 1px solid var(--border);">brz inspect</code>. Environment variables interpolate with <code style="font-family: var(--font-mono); font-size: 12px; background: var(--bg); padding: 2px 5px; color: var(--cyan); border: 1px solid var(--border);">${VAR}</code>.</p>
+        <div class="steps-table-wrap" style="margin-top: 20px;">
+          <table class="steps-table">
+            <thead><tr><th>Step</th><th>What it does</th></tr></thead>
+            <tbody>
+              <tr><td>click</td><td>Click by selector, text, or nth</td></tr>
+              <tr><td>fill</td><td>Type into input fields</td></tr>
+              <tr><td>select</td><td>Native or Select2 dropdowns</td></tr>
+              <tr><td>upload</td><td>Set file on input[type=file]</td></tr>
+              <tr><td>download</td><td>Capture file downloads</td></tr>
+              <tr><td>navigate</td><td>Go to a URL</td></tr>
+              <tr><td>wait_visible</td><td>Wait for element</td></tr>
+              <tr><td>wait_text</td><td>Wait for text on page</td></tr>
+              <tr><td>wait_url</td><td>Wait for URL match</td></tr>
+              <tr><td>eval</td><td>Run JS in page context</td></tr>
+              <tr><td>screenshot</td><td>Capture page state</td></tr>
+              <tr><td>sleep</td><td>Pause for a duration</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div>
+        <div class="code-block">
+          <div class="code-header">
+            <div class="code-dots"><span class="code-dot"></span><span class="code-dot"></span><span class="code-dot"></span></div>
+            <span class="code-header-title">export-reports.yaml</span>
+          </div>
+          <div class="code-body">
+<div><span class="key">name:</span> <span class="val">export-reports</span></div>
+<div><span class="key">actions:</span></div>
+<div>  <span class="key">login:</span></div>
+<div>    <span class="key">url:</span> <span class="val">https://app.example.com/login</span></div>
+<div>    <span class="key">steps:</span></div>
+<div>      - <span class="key">fill:</span></div>
+<div>          <span class="key">selector:</span> <span class="val">'input[name="email"]'</span></div>
+<div>          <span class="key">value:</span> <span class="val">'${EMAIL}'</span></div>
+<div>      - <span class="key">fill:</span></div>
+<div>          <span class="key">selector:</span> <span class="val">'input[name="password"]'</span></div>
+<div>          <span class="key">value:</span> <span class="val">'${PASSWORD}'</span></div>
+<div>      - <span class="key">click:</span></div>
+<div>          <span class="key">selector:</span> <span class="val">'button[type="submit"]'</span></div>
+<div>      - <span class="key">wait_url:</span></div>
+<div>          <span class="key">match:</span> <span class="val">'/dashboard'</span></div>
+<div>&nbsp;</div>
+<div>  <span class="key">export:</span></div>
+<div>    <span class="key">url:</span> <span class="val">https://app.example.com/reports</span></div>
+<div>    <span class="key">steps:</span></div>
+<div>      - <span class="key">click:</span> { <span class="key">selector:</span> <span class="val">'#export-csv-btn'</span> }</div>
+<div>      - <span class="key">download:</span> { <span class="key">timeout:</span> <span class="val">'60s'</span> }</div>
+<div>    <span class="key">eval:</span></div>
+<div>      - <span class="key">download_min_rows:</span> <span class="num">1</span></div>
+<div>      - <span class="key">download_has_columns:</span></div>
+<div>          - <span class="val">ID</span></div>
+<div>          - <span class="val">Name</span></div>
+<div>          - <span class="val">Price</span></div>
+          </div>
+        </div>
+
+        <div style="margin-top: 16px;">
+          <div class="code-block">
+            <div class="code-header">
+              <div class="code-dots"><span class="code-dot"></span><span class="code-dot"></span><span class="code-dot"></span></div>
+              <span class="code-header-title">Run It</span>
+            </div>
+            <div class="code-body">
+<div><span class="prompt">$</span> <span class="cmd">brz run</span> <span class="str">export-reports.yaml</span> <span class="cmd">login,export</span> \</div>
+<div>    <span class="flag">--env</span> <span class="str">EMAIL=dev@co.com</span> \</div>
+<div>    <span class="flag">--env</span> <span class="str">PASSWORD=secret</span></div>
+<div>&nbsp;</div>
+<div><span class="output">{"ok":true,"action":"export","download":"/tmp/report.csv","duration_ms":4100}</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<hr class="divider">
+
+<!-- AGENT SECTION -->
+<section id="agents">
+  <div class="container">
+    <div class="section-label fade-in">// Built for Agents</div>
+    <h2 class="section-title fade-in">Your LLM's browser.</h2>
+    <p class="section-desc fade-in">Designed from day one for LLM tool-use loops. JSON output. Semantic exit codes. Error context with similar selectors. An embedded prompt you can copy into any agent.</p>
+
+    <div class="agent-grid fade-in">
+      <div>
+        <div class="code-block">
+          <div class="code-header">
+            <div class="code-dots"><span class="code-dot"></span><span class="code-dot"></span><span class="code-dot"></span></div>
+            <span class="code-header-title">Agent Loop</span>
+          </div>
+          <div class="code-body">
+<div><span class="comment"># Agent discovers the page</span></div>
+<div><span class="prompt">$</span> <span class="cmd">brz inspect</span> <span class="str">$URL</span> <span class="flag">--compact</span> <span class="flag">--json</span></div>
+<div>&nbsp;</div>
+<div><span class="comment"># Agent generates workflow YAML</span></div>
+<div><span class="comment"># Agent validates before running</span></div>
+<div><span class="prompt">$</span> <span class="cmd">brz validate</span> <span class="str">agent-wf.yaml</span></div>
+<div>&nbsp;</div>
+<div><span class="comment"># Agent dry-runs to check env vars</span></div>
+<div><span class="prompt">$</span> <span class="cmd">brz run</span> <span class="str">agent-wf.yaml</span> <span class="cmd">action</span> <span class="flag">--dry-run</span></div>
+<div>&nbsp;</div>
+<div><span class="comment"># Agent executes</span></div>
+<div><span class="prompt">$</span> <span class="cmd">brz run</span> <span class="str">agent-wf.yaml</span> <span class="cmd">action</span></div>
+<div>&nbsp;</div>
+<div><span class="comment"># On failure: page_elements has similar selectors</span></div>
+<div><span class="comment"># Agent self-corrects without re-inspecting</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="agent-cards">
+        <div class="agent-card">
+          <h3>JSON When Piped</h3>
+          <p>TTY gets human-readable output. Pipes get structured JSON. Your agent always gets parseable data.</p>
+        </div>
+        <div class="agent-card">
+          <h3>Error Recovery</h3>
+          <p>Failed steps include <code>page_elements</code> with up to 5 similar selectors. Self-correct without re-inspecting.</p>
+        </div>
+        <div class="agent-card">
+          <h3>Embedded Prompt</h3>
+          <p><code>brz prompt</code> outputs a complete system prompt. Every command, flag, step type, error pattern.</p>
+        </div>
+        <div class="agent-card">
+          <h3>Session Persistence</h3>
+          <p>Login once, cookies persist forever. Authenticate once, every subsequent command sees the session.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<hr class="divider">
+
+<!-- FEATURES -->
+<section id="features">
+  <div class="container">
+    <div class="section-label fade-in">// Features</div>
+    <h2 class="section-title fade-in">One tool, done right.</h2>
+    <p class="section-desc fade-in">No plugin system. No configuration files. No framework tax. Just a binary that does exactly what you tell it to.</p>
+
+    <div class="feature-grid fade-in">
+      <div class="feature-card">
+        <h3>Stealth Mode</h3>
+        <p>New headless mode, webdriver masking, Client Hints spoofing, real User-Agent. Passes Cloudflare, PerimeterX, DataDome. Zero config.</p>
+      </div>
+      <div class="feature-card">
+        <h3>Auto-Headed Fallback</h3>
+        <p>Set BRZ_HEADED=auto. Starts headless, escalates to headed when CAPTCHA or expired cookies detected. Browser stays open for intervention.</p>
+      </div>
+      <div class="feature-card">
+        <h3>Debug Screenshots</h3>
+        <p>Before/after JPEGs on every step failure. Ring buffer in memory, zero disk I/O on success. See what the browser saw.</p>
+      </div>
+      <div class="feature-card">
+        <h3>9 Eval Assertions</h3>
+        <p>Post-action verification: JS, URL match, text visibility, selector existence, status codes, download size, CSV rows, column validation.</p>
+      </div>
+      <div class="feature-card">
+        <h3>Smart Navigation</h3>
+        <p>Skips redundant loads when action URL matches current page. No-URL actions reuse current tab. Saves seconds per run.</p>
+      </div>
+      <div class="feature-card">
+        <h3>Native Dropdowns</h3>
+        <p>The select step auto-detects native vs Select2. Retries disabled elements within timeout for AJAX-populated options.</p>
+      </div>
+      <div class="feature-card">
+        <h3>System Chrome First</h3>
+        <p>Uses your existing Chrome. No download on first run. Falls back to auto-download only when Chrome isn't found.</p>
+      </div>
+      <div class="feature-card">
+        <h3>Public Go API</h3>
+        <p>The workflow/ package is importable and thread-safe. Build your own Go programs on brz's execution engine.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<hr class="divider">
+
+<!-- CTA -->
+<section class="cta-section">
+  <div class="container">
+    <div class="glow-orb" style="width: 500px; height: 500px; background: rgba(0, 255, 238, 0.05); bottom: -200px; right: -200px;"></div>
+    <div class="glow-orb" style="width: 400px; height: 400px; background: rgba(255, 0, 128, 0.04); bottom: -100px; left: -150px;"></div>
+
+    <h2 class="fade-in">Start automating.</h2>
+    <p class="cta-sub fade-in">One install. One binary. One YAML file between you and your first workflow.</p>
+
+    <div class="install-bar fade-in" onclick="copyInstall(this)" style="margin-bottom: 28px; animation: none; opacity: 1;">
+      <span class="prompt">$</span>
+      <span>go install github.com/crackfetch/brz@latest</span>
+      <span class="copy-hint">Copy</span>
+    </div>
+
+    <div class="fade-in" style="display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;">
+      <a href="https://github.com/crackfetch/brainstorm" class="btn btn-primary" target="_blank" rel="noopener">View on GitHub</a>
+      <a href="https://github.com/crackfetch/brainstorm/tree/main/docs" class="btn btn-ghost" target="_blank" rel="noopener">Read the Docs</a>
+    </div>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <div class="container">
+    <div class="footer-ascii">  ____  ____  ____
+ | __ )| _ \|__  |
+ |  _ \|  _/  / /
+ |____/|_|   /___|</div>
+    <ul class="footer-links">
+      <li><a href="https://github.com/crackfetch/brainstorm" target="_blank" rel="noopener">GitHub</a></li>
+      <li><a href="https://github.com/crackfetch/brainstorm/tree/main/docs" target="_blank" rel="noopener">Docs</a></li>
+      <li><a href="https://github.com/go-rod/rod" target="_blank" rel="noopener">Rod</a></li>
+    </ul>
+    <div class="footer-copy">Open source // Built with Go + Rod</div>
+  </div>
+</footer>
+
+<script>
+// Perspective grid canvas
+(function() {
+  const canvas = document.getElementById('gridCanvas');
+  const ctx = canvas.getContext('2d');
+  let w, h;
+
+  function resize() {
+    w = canvas.width = window.innerWidth;
+    h = canvas.height = window.innerHeight;
+    draw();
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, w, h);
+
+    // Horizontal grid lines with perspective
+    const horizon = h * 0.35;
+    const lines = 30;
+    const vanishX = w * 0.5;
+
+    ctx.strokeStyle = 'rgba(0, 255, 238, 0.04)';
+    ctx.lineWidth = 1;
+
+    // Horizontal lines
+    for (let i = 0; i < lines; i++) {
+      const t = i / lines;
+      const y = horizon + (h - horizon) * Math.pow(t, 1.5);
+      const alpha = 0.02 + t * 0.03;
+      ctx.strokeStyle = `rgba(0, 255, 238, ${alpha})`;
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(w, y);
+      ctx.stroke();
+    }
+
+    // Vertical lines converging to vanishing point
+    const vertLines = 20;
+    for (let i = -vertLines; i <= vertLines; i++) {
+      const x = vanishX + (i / vertLines) * w * 1.5;
+      const alpha = 0.015 + (1 - Math.abs(i / vertLines)) * 0.025;
+      ctx.strokeStyle = `rgba(0, 255, 238, ${alpha})`;
+      ctx.beginPath();
+      ctx.moveTo(vanishX, horizon);
+      ctx.lineTo(x, h);
+      ctx.stroke();
+    }
+
+    // Glow at vanishing point
+    const grd = ctx.createRadialGradient(vanishX, horizon, 0, vanishX, horizon, 200);
+    grd.addColorStop(0, 'rgba(0, 255, 238, 0.03)');
+    grd.addColorStop(0.5, 'rgba(255, 0, 128, 0.015)');
+    grd.addColorStop(1, 'transparent');
+    ctx.fillStyle = grd;
+    ctx.fillRect(vanishX - 200, horizon - 200, 400, 400);
+  }
+
+  window.addEventListener('resize', resize);
+  resize();
+})();
+
+// Scroll animations
+const observer = new IntersectionObserver((entries) => {
+  entries.forEach(entry => {
+    if (entry.isIntersecting) entry.target.classList.add('visible');
+  });
+}, { threshold: 0.1, rootMargin: '0px 0px -40px 0px' });
+
+document.querySelectorAll('.fade-in').forEach(el => observer.observe(el));
+
+// Copy install command
+function copyInstall(el) {
+  const text = 'go install github.com/crackfetch/brz@latest';
+  navigator.clipboard.writeText(text).then(() => {
+    const hint = el.querySelector('.copy-hint');
+    hint.textContent = 'COPIED!';
+    hint.style.color = 'var(--lime)';
+    setTimeout(() => {
+      hint.textContent = 'Copy';
+      hint.style.color = '';
+    }, 2000);
+  });
+}
+</script>
+
+</body>
+</html>
