@@ -76,6 +76,12 @@ Use `--full` to see all visible elements (capped at 500):
 brz inspect https://example.com/login --full
 ```
 
+**Filter** by tag or name to reduce output: `brz inspect <url> --tag input,button --name email`
+
+**Compact mode** strips extra fields for token efficiency: `brz inspect <url> --compact`
+
+**Combo mode** captures a screenshot in the same session: `brz inspect <url> --screenshot --eval "document.title"`
+
 ### Screenshot: visual context
 
 ```bash
@@ -143,6 +149,12 @@ brz actions my-workflow.yaml
 
 # Run a specific action
 brz run my-workflow.yaml login --env EMAIL=me@co.com --env PASSWORD=secret
+
+# Chain actions in one browser session (saves cold-starts)
+brz run my-workflow.yaml login,export --env EMAIL=me@co.com
+
+# Dry-run: see resolved steps without launching Chrome
+brz run my-workflow.yaml login --dry-run --env EMAIL=me@co.com
 
 # Run an export and get the file path
 brz run my-workflow.yaml export | jq -r .download

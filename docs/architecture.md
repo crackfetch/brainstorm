@@ -75,10 +75,10 @@ The core engine. Six files:
 | File | Purpose |
 |------|---------|
 | `types.go` | Go structs matching the YAML schema (Workflow, Action, Step, ClickStep, etc.) |
-| `loader.go` | YAML parser, validation, `${ENV_VAR}` interpolation |
-| `executor.go` | Browser lifecycle (Start, Close), page management (NavigateTo, RunAction), stealth |
-| `result.go` | ActionResult struct returned by RunAction |
-| `inspect.go` | InspectResult/ElementInfo types, InspectJS (embedded DOM extraction JavaScript) |
+| `loader.go` | YAML parser, validation, `${ENV_VAR}` interpolation, `ResolveSteps()` for `--dry-run`, `SplitActionNames()` for multi-action |
+| `executor.go` | Browser lifecycle (Start, Close), page management (NavigateTo, RunAction), stealth, similar element capture on failure |
+| `result.go` | ActionResult struct returned by RunAction (includes `page_elements` on failure) |
+| `inspect.go` | InspectResult/ElementInfo types, InspectJS, SimilarElementsJS, FilterByTag/FilterByName, CompactElements |
 | `options.go` | Functional options: WithHeaded, WithAutoHeaded, WithDebug, WithProfileDir |
 
 **Key Executor methods:**

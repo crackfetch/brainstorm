@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/url"
@@ -656,6 +657,14 @@ func (e *Executor) runSteps(name string, action Action) *ActionResult {
 			// Capture page state for debugging.
 			result.PageURL, result.PageHTML = e.capturePageState()
 
+			// Capture similar elements for agent context (helps avoid re-inspect round-trip).
+			if selector := StepSelector(step); selector != "" && e.page != nil {
+				tag := ExtractTagFromSelector(selector)
+				if elements := e.captureSimilarElements(tag); len(elements) > 0 {
+					result.PageElements = elements
+				}
+			}
+
 			return result
 		}
 	}
@@ -1086,6 +1095,25 @@ func (e *Executor) capturePageState() (pageURL, pageHTML string) {
 		pageHTML = html
 	}
 	return
+}
+
+// captureSimilarElements runs SimilarElementsJS on the current page to find
+// elements similar to the failed step's target. Returns up to 5 elements.
+// Returns nil on any error (defensive — don't mask the real failure).
+func (e *Executor) captureSimilarElements(tag string) []ElementInfo {
+	if e.page == nil {
+		return nil
+	}
+	res, err := e.page.Timeout(2 * time.Second).Eval(SimilarElementsJS, tag)
+	if err != nil {
+		return nil
+	}
+	var elements []ElementInfo
+	raw := res.Value.JSON("", "")
+	if err := json.Unmarshal([]byte(raw), &elements); err != nil {
+		return nil
+	}
+	return elements
 }
 
 // WaitOnFailure keeps the browser open for inspection when headed and an

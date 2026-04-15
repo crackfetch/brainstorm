@@ -40,6 +40,18 @@ func (e *envFlag) Set(v string) error {
 	return nil
 }
 
+// parseEnvFlags converts --env KEY=VAL flags into a map.
+// Entries without "=" are silently skipped.
+func parseEnvFlags(envs envFlag) map[string]string {
+	m := make(map[string]string, len(envs))
+	for _, kv := range envs {
+		if k, v, ok := strings.Cut(kv, "="); ok {
+			m[k] = v
+		}
+	}
+	return m
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		printUsage()
@@ -152,6 +164,7 @@ func cmdRun(args []string) {
 	bf := addBrowserFlags(fs)
 	var envs envFlag
 	fs.Var(&envs, "env", "Set workflow env var (repeatable): --env KEY=VAL")
+	dryRun := fs.Bool("dry-run", false, "Show resolved steps without executing (no browser needed)")
 
 	fs.Usage = func() { printRunUsage() }
 	fs.Parse(args)
@@ -162,13 +175,75 @@ func cmdRun(args []string) {
 	}
 
 	workflowPath := fs.Arg(0)
-	actionName := fs.Arg(1)
+	actionArg := fs.Arg(1)
+	names := workflow.SplitActionNames(actionArg)
 	useJSON := bf.json || !term.IsTerminal(int(os.Stdout.Fd()))
+
+	if len(names) == 0 {
+		outputError(useJSON, exitWorkflowError, "no action name provided")
+		return
+	}
 
 	// Load workflow
 	w, err := workflow.Load(workflowPath)
 	if err != nil {
 		outputError(useJSON, exitWorkflowError, err.Error())
+		return
+	}
+
+	// --dry-run: resolve steps and print without launching a browser
+	if *dryRun {
+		// Build merged env: workflow defaults + --env overrides
+		mergedEnv := make(map[string]string, len(w.Env))
+		for k, v := range w.Env {
+			mergedEnv[k] = v
+		}
+		for k, v := range parseEnvFlags(envs) {
+			mergedEnv[k] = v
+		}
+
+		type dryRunOutput struct {
+			Action string                  `json:"action"`
+			URL    string                  `json:"url,omitempty"`
+			Steps  []workflow.ResolvedStep `json:"steps"`
+		}
+
+		var output []dryRunOutput
+		for _, name := range names {
+			action, ok := w.Actions[name]
+			if !ok {
+				outputError(useJSON, exitWorkflowError, fmt.Sprintf("action %q not found", name))
+				return
+			}
+			resolved := workflow.ResolveSteps(action, mergedEnv)
+			resolvedURL := workflow.InterpolateEnv(action.URL, mergedEnv)
+			output = append(output, dryRunOutput{Action: name, URL: resolvedURL, Steps: resolved})
+		}
+
+		if useJSON {
+			if len(output) == 1 {
+				encodeJSON(output[0])
+			} else {
+				encodeJSON(output)
+			}
+		} else {
+			for _, o := range output {
+				fmt.Printf("Action: %s\n", o.Action)
+				if o.URL != "" {
+					fmt.Printf("  URL: %s\n", o.URL)
+				}
+				for i, s := range o.Steps {
+					fmt.Printf("  Step %d: %s", i+1, s.Type)
+					if s.Selector != "" {
+						fmt.Printf("  %s", s.Selector)
+					}
+					if s.Value != "" {
+						fmt.Printf("  value=%s", s.Value)
+					}
+					fmt.Println()
+				}
+			}
+		}
 		return
 	}
 
@@ -193,11 +268,8 @@ func cmdRun(args []string) {
 	exec := workflow.NewExecutor(w, opts...)
 
 	// Inject --env flags into workflow env
-	for _, kv := range envs {
-		parts := strings.SplitN(kv, "=", 2)
-		if len(parts) == 2 {
-			exec.SetEnv(parts[0], parts[1])
-		}
+	for k, v := range parseEnvFlags(envs) {
+		exec.SetEnv(k, v)
 	}
 
 	if err := exec.Start(); err != nil {
@@ -206,17 +278,31 @@ func cmdRun(args []string) {
 	}
 	defer exec.Close()
 
-	result := exec.RunAction(actionName)
-
-	if useJSON {
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetEscapeHTML(false)
-		enc.Encode(result)
-	} else {
-		printHumanResult(result)
+	var lastResult *workflow.ActionResult
+	for i, name := range names {
+		result := exec.RunAction(name)
+		lastResult = result
+		if !result.OK {
+			break // fail-fast
+		}
+		// Print intermediate results for multi-action (not the last one)
+		if len(names) > 1 && i < len(names)-1 {
+			if useJSON {
+				encodeJSON(result)
+			} else {
+				fmt.Printf("OK  %s  %d steps  %dms\n", result.Action, result.Steps, result.DurationMs)
+			}
+		}
 	}
 
-	if !result.OK {
+	// Always output the final result (last success or first failure).
+	if useJSON {
+		encodeJSON(lastResult)
+	} else {
+		printHumanResult(lastResult)
+	}
+
+	if !lastResult.OK {
 		exec.WaitOnFailure()
 		os.Exit(exitActionFailed)
 	}
@@ -230,6 +316,11 @@ func cmdInspect(args []string) {
 	fs := flag.NewFlagSet("inspect", flag.ExitOnError)
 	bf := addBrowserFlags(fs)
 	full := fs.Bool("full", false, "Return all visible elements (default: actionable only)")
+	tagFilter := fs.String("tag", "", "Filter by tag name (comma-separated, e.g. input,button)")
+	nameFilter := fs.String("name", "", "Filter by name attribute (comma-separated, e.g. email,password)")
+	compact := fs.Bool("compact", false, "Compact output: only selector, tag, type, name, text")
+	screenshotFlag := fs.Bool("screenshot", false, "Also capture a screenshot")
+	evalFlag := fs.String("eval", "", "Also evaluate a JS expression")
 	fs.Usage = func() { printInspectUsage() }
 	fs.Parse(args)
 
@@ -268,10 +359,51 @@ func cmdInspect(args []string) {
 	result.OK = true
 	result.DurationMs = time.Since(start).Milliseconds()
 
+	// Apply filters
+	if *tagFilter != "" {
+		tags := strings.Split(*tagFilter, ",")
+		result.Elements = workflow.FilterByTag(result.Elements, tags)
+		result.Total = len(result.Elements)
+	}
+	if *nameFilter != "" {
+		names := strings.Split(*nameFilter, ",")
+		result.Elements = workflow.FilterByName(result.Elements, names)
+		result.Total = len(result.Elements)
+	}
+
+	// Compact mode
+	if *compact {
+		result.Elements = workflow.CompactElements(result.Elements)
+	}
+
+	// Screenshot combo
+	if *screenshotFlag {
+		sdata, serr := exec.Page().Screenshot(true, nil)
+		if serr != nil {
+			result.Error = fmt.Sprintf("screenshot: %v", serr)
+		} else {
+			f, ferr := os.CreateTemp("", "brz-inspect-screenshot-*.png")
+			if ferr == nil {
+				f.Write(sdata)
+				f.Close()
+				result.Screenshot = f.Name()
+			}
+		}
+	}
+
+	// Eval combo
+	if *evalFlag != "" {
+		js := fmt.Sprintf(`() => { return %s; }`, *evalFlag)
+		evalRes, evalErr := exec.Page().Eval(js)
+		if evalErr == nil {
+			result.EvalResult = evalRes.Value.Val()
+		} else if result.Error == "" {
+			result.Error = fmt.Sprintf("eval: %v", evalErr)
+		}
+	}
+
 	if useJSON {
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetEscapeHTML(false)
-		enc.Encode(result)
+		encodeJSON(result)
 	} else {
 		fmt.Printf("OK  %s  %d elements  %dms\n", result.URL, result.Total, result.DurationMs)
 		for _, el := range result.Elements {
@@ -289,6 +421,12 @@ func cmdInspect(args []string) {
 				line += "  [hidden]"
 			}
 			fmt.Println(line)
+		}
+		if result.Screenshot != "" {
+			fmt.Printf("  screenshot: %s\n", result.Screenshot)
+		}
+		if result.EvalResult != nil {
+			fmt.Printf("  eval: %v\n", result.EvalResult)
 		}
 	}
 }
@@ -516,6 +654,12 @@ func cmdActions(args []string) {
 // ---------------------------------------------------------------------------
 // Output helpers
 // ---------------------------------------------------------------------------
+
+func encodeJSON(v interface{}) {
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetEscapeHTML(false)
+	enc.Encode(v)
+}
 
 func outputError(useJSON bool, code int, msg string) {
 	if useJSON {

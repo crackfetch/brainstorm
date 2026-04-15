@@ -31,10 +31,16 @@ Always start with `brz inspect` to discover selectors before writing workflows.
 ### inspect — discover interactive elements
 
 ```bash
-brz inspect <url> [--full] [--headed] [--json]
+brz inspect <url> [--full] [--tag input,button] [--name email] [--compact] [--screenshot] [--eval "expr"] [--headed] [--json]
 ```
 
 Returns every input, button, link, select, and form on the page with CSS selectors you can use directly in workflow YAML.
+
+**Filters:** `--tag input,button` keeps only elements with matching tags. `--name email,password` keeps only elements with matching name attributes. Both compose (element must match both if both set).
+
+**Compact mode:** `--compact` strips placeholder, href, value, role, and hidden fields from each element. Keeps only selector, tag, type, name, and text. ~40% fewer tokens.
+
+**Combo mode:** `--screenshot` captures a screenshot in the same browser session (saves a cold-start). `--eval "document.title"` runs a JS expression. Both add fields to the JSON output.
 
 ```json
 {
@@ -48,11 +54,13 @@ Returns every input, button, link, select, and form on the page with CSS selecto
     {"selector": "button.submit", "tag": "button", "text": "Sign In"},
     {"selector": "input[type=\"hidden\"]", "tag": "input", "type": "hidden", "name": "csrf_token", "value": "abc123", "hidden": true}
   ],
-  "duration_ms": 1200
+  "duration_ms": 1200,
+  "screenshot": "/tmp/brz-inspect-screenshot-123.png",
+  "eval_result": "Login"
 }
 ```
 
-Use `--full` to return all visible elements (default: actionable only).
+Use `--full` to return all visible elements (default: actionable only). `screenshot` and `eval_result` fields only appear when `--screenshot` / `--eval` flags are used.
 
 ### screenshot — capture a page
 
@@ -81,7 +89,19 @@ The expression is wrapped in a function and its return value is captured. Promis
 ### run — execute a workflow action
 
 ```bash
-brz run <workflow.yaml> <action> [--env KEY=VAL]... [--headed] [--debug] [--json]
+brz run <workflow.yaml> <action>[,action2,action3] [--env KEY=VAL]... [--headed] [--debug] [--dry-run] [--json]
+```
+
+**Multi-action:** Comma-separated action names run sequentially in one browser session (saves N-1 cold starts). Fail-fast on first failure. Output is always the last ActionResult.
+
+```bash
+brz run site.yaml login,export --env EMAIL=me@co.com
+```
+
+**Dry-run:** `--dry-run` resolves env vars and prints the concrete steps without launching Chrome. Useful to verify YAML before paying the browser tax.
+
+```bash
+brz run site.yaml login --dry-run --env EMAIL=me@co.com
 ```
 
 Success:
@@ -89,9 +109,9 @@ Success:
 {"ok": true, "action": "export", "steps": 3, "duration_ms": 2100, "download": "/tmp/file.csv", "download_size": 51200}
 ```
 
-Failure:
+Failure (includes `page_elements` with up to 5 similar selectors for agent context):
 ```json
-{"ok": false, "action": "login", "error": "find element ...", "failed_step": 2, "step_type": "click", "screenshot": "/tmp/after.png", "screenshot_before": "/tmp/before.jpg"}
+{"ok": false, "action": "login", "error": "find element ...", "failed_step": 2, "step_type": "click", "screenshot": "/tmp/after.png", "screenshot_before": "/tmp/before.jpg", "page_elements": [{"selector": "button.btn-submit", "tag": "button", "text": "Submit"}]}
 ```
 
 On failure, `screenshot_before` shows the page BEFORE the failed step ran (JPEG, ~50KB). Compare with `screenshot` (after) to understand what changed. Both are auto-captured with zero overhead on success.
@@ -205,6 +225,12 @@ actions:
 | `--profile DIR` | Custom Chrome profile directory |
 | `--ephemeral` | Fresh temp profile, no session reuse |
 | `--env KEY=VAL` | Set workflow env var (repeatable, `run` only) |
+| `--dry-run` | Print resolved steps without launching Chrome (`run` only) |
+| `--tag TAG,...` | Filter inspect elements by tag (`inspect` only) |
+| `--name NAME,...` | Filter inspect elements by name attribute (`inspect` only) |
+| `--compact` | Compact JSON output with fewer fields (`inspect` only) |
+| `--screenshot` | Also capture screenshot (`inspect` only) |
+| `--eval "expr"` | Also evaluate JS expression (`inspect` only) |
 
 ## Example: Login Workflow
 
@@ -284,15 +310,15 @@ Evals are immutable verification. An agent can modify steps (selectors, timeouts
 
 When automating a new site:
 
-1. **Inspect** the page: `brz inspect <url>` to discover selectors
-2. **Screenshot** for visual context: `brz screenshot <url>`
+1. **Inspect + screenshot** in one call: `brz inspect <url> --screenshot` to discover selectors and see the page
+2. **Filter** if you know what you need: `brz inspect <url> --tag input,button --compact`
 3. **Write** a YAML workflow using the selectors from step 1
-4. **Validate** the YAML: `brz validate workflow.yaml`
+4. **Dry-run** to verify env vars resolve: `brz run workflow.yaml login --dry-run --env EMAIL=x`
 5. **Run** the action: `brz run workflow.yaml <action> --env KEY=VAL`
-6. **Chain** actions (session persists): `brz run workflow.yaml login && brz run workflow.yaml export`
+6. **Chain** actions in one session: `brz run workflow.yaml login,export --env EMAIL=x` (saves a cold-start)
 
 **On failure (exit code 1):**
-1. Re-run with `--debug` to get a screenshot of the page state at failure
-2. Run `brz inspect <url>` to discover the current selectors (they may have changed)
+1. Check `page_elements` in the failure JSON — it includes up to 5 similar selectors from the current page
+2. If `page_elements` isn't enough, re-inspect: `brz inspect <url> --tag button` to find the right selector
 3. Update selectors in your YAML and add `wait_visible` before clicks on dynamic content
 4. Use `--headed` to watch the browser and see what's happening visually
