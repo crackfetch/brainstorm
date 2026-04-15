@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://crackfetch.github.io/brainstorm/sitemap.xml
