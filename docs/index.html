@@ -376,13 +376,40 @@
   }
 
   /* === INSTALL === */
+  .install-group {
+    max-width: 520px;
+    margin: 0 auto;
+    opacity: 0;
+    animation: fadeUp 0.5s ease-out 2.1s forwards;
+  }
+  .install-tabs {
+    display: flex;
+    gap: 0;
+  }
+  .install-tab {
+    font-family: var(--font-pixel);
+    font-size: 7px;
+    padding: 6px 14px;
+    background: var(--bg);
+    color: var(--muted);
+    border: 2px solid var(--border);
+    border-bottom: none;
+    cursor: pointer;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    transition: color 0.15s, background 0.15s;
+  }
+  .install-tab:first-child { margin-right: -2px; }
+  .install-tab.active {
+    background: var(--surface);
+    color: var(--cyan);
+    border-color: var(--border);
+  }
+  .install-tab:hover:not(.active) { color: var(--text); }
   .install-bar {
     display: flex;
     align-items: center;
-    justify-content: center;
     gap: 12px;
-    max-width: 520px;
-    margin: 0 auto;
     background: var(--surface);
     border: 2px solid var(--border);
     padding: 12px 20px;
@@ -390,8 +417,6 @@
     font-size: 14px;
     cursor: pointer;
     transition: border-color 0.15s;
-    opacity: 0;
-    animation: fadeUp 0.5s ease-out 2.1s forwards;
   }
   .install-bar:hover { border-color: var(--cyan); }
   .install-bar .prompt { color: var(--lime); }
@@ -403,6 +428,8 @@
     text-transform: uppercase;
   }
   .install-bar:hover .copy-hint { color: var(--cyan); }
+  .install-cmd { display: none; }
+  .install-cmd.active { display: flex; }
 
   /* === HERO TERMINAL === */
   .hero-terminal {
@@ -939,8 +966,8 @@
 <!-- TICKER -->
 <div class="ticker">
   <div class="ticker-inner">
-    YAML-DRIVEN BROWSER AUTOMATION &nbsp;&nbsp;/&nbsp;&nbsp; STEALTH-HARDENED &nbsp;&nbsp;/&nbsp;&nbsp; JSON OUTPUT &nbsp;&nbsp;/&nbsp;&nbsp; BUILT FOR LLM AGENTS &nbsp;&nbsp;/&nbsp;&nbsp; ZERO DEPENDENCIES &nbsp;&nbsp;/&nbsp;&nbsp; SESSION PERSISTENCE &nbsp;&nbsp;/&nbsp;&nbsp; 12 STEP TYPES &nbsp;&nbsp;/&nbsp;&nbsp; 9 EVAL ASSERTIONS &nbsp;&nbsp;/&nbsp;&nbsp; SEMANTIC EXIT CODES &nbsp;&nbsp;/&nbsp;&nbsp; PUBLIC GO API &nbsp;&nbsp;/&nbsp;&nbsp;
-    YAML-DRIVEN BROWSER AUTOMATION &nbsp;&nbsp;/&nbsp;&nbsp; STEALTH-HARDENED &nbsp;&nbsp;/&nbsp;&nbsp; JSON OUTPUT &nbsp;&nbsp;/&nbsp;&nbsp; BUILT FOR LLM AGENTS &nbsp;&nbsp;/&nbsp;&nbsp; ZERO DEPENDENCIES &nbsp;&nbsp;/&nbsp;&nbsp; SESSION PERSISTENCE &nbsp;&nbsp;/&nbsp;&nbsp; 12 STEP TYPES &nbsp;&nbsp;/&nbsp;&nbsp; 9 EVAL ASSERTIONS &nbsp;&nbsp;/&nbsp;&nbsp; SEMANTIC EXIT CODES &nbsp;&nbsp;/&nbsp;&nbsp; PUBLIC GO API &nbsp;&nbsp;/&nbsp;&nbsp;
+    YAML-DRIVEN BROWSER AUTOMATION &nbsp;&nbsp;/&nbsp;&nbsp; BREW INSTALL CRACKFETCH/TAP/BRZ &nbsp;&nbsp;/&nbsp;&nbsp; STEALTH-HARDENED &nbsp;&nbsp;/&nbsp;&nbsp; JSON OUTPUT &nbsp;&nbsp;/&nbsp;&nbsp; BUILT FOR LLM AGENTS &nbsp;&nbsp;/&nbsp;&nbsp; ZERO DEPENDENCIES &nbsp;&nbsp;/&nbsp;&nbsp; SESSION PERSISTENCE &nbsp;&nbsp;/&nbsp;&nbsp; 12 STEP TYPES &nbsp;&nbsp;/&nbsp;&nbsp; 9 EVAL ASSERTIONS &nbsp;&nbsp;/&nbsp;&nbsp; SEMANTIC EXIT CODES &nbsp;&nbsp;/&nbsp;&nbsp; PUBLIC GO API &nbsp;&nbsp;/&nbsp;&nbsp;
+    YAML-DRIVEN BROWSER AUTOMATION &nbsp;&nbsp;/&nbsp;&nbsp; BREW INSTALL CRACKFETCH/TAP/BRZ &nbsp;&nbsp;/&nbsp;&nbsp; STEALTH-HARDENED &nbsp;&nbsp;/&nbsp;&nbsp; JSON OUTPUT &nbsp;&nbsp;/&nbsp;&nbsp; BUILT FOR LLM AGENTS &nbsp;&nbsp;/&nbsp;&nbsp; ZERO DEPENDENCIES &nbsp;&nbsp;/&nbsp;&nbsp; SESSION PERSISTENCE &nbsp;&nbsp;/&nbsp;&nbsp; 12 STEP TYPES &nbsp;&nbsp;/&nbsp;&nbsp; 9 EVAL ASSERTIONS &nbsp;&nbsp;/&nbsp;&nbsp; SEMANTIC EXIT CODES &nbsp;&nbsp;/&nbsp;&nbsp; PUBLIC GO API &nbsp;&nbsp;/&nbsp;&nbsp;
   </div>
 </div>
 
@@ -996,10 +1023,21 @@
       <a href="https://github.com/crackfetch/brainstorm" class="btn btn-ghost" target="_blank" rel="noopener">View Source</a>
     </div>
 
-    <div class="install-bar" onclick="copyInstall(this)">
-      <span class="prompt">$</span>
-      <span>go install github.com/crackfetch/brz@latest</span>
-      <span class="copy-hint">Copy</span>
+    <div class="install-group">
+      <div class="install-tabs">
+        <button class="install-tab active" onclick="switchInstall(this, 'brew')">Homebrew</button>
+        <button class="install-tab" onclick="switchInstall(this, 'go')">Go Install</button>
+      </div>
+      <div class="install-bar install-cmd active" data-method="brew" onclick="copyInstall(this)">
+        <span class="prompt">$</span>
+        <span>brew install crackfetch/tap/brz</span>
+        <span class="copy-hint">Copy</span>
+      </div>
+      <div class="install-bar install-cmd" data-method="go" onclick="copyInstall(this)">
+        <span class="prompt">$</span>
+        <span>go install github.com/crackfetch/brz@latest</span>
+        <span class="copy-hint">Copy</span>
+      </div>
     </div>
 
     <div class="eq-bars">
@@ -1385,10 +1423,21 @@
     <h2 class="fade-in">Start automating.</h2>
     <p class="cta-sub fade-in">One install. One binary. One YAML file between you and your first workflow.</p>
 
-    <div class="install-bar fade-in" onclick="copyInstall(this)" style="margin-bottom: 28px; animation: none; opacity: 1;">
-      <span class="prompt">$</span>
-      <span>go install github.com/crackfetch/brz@latest</span>
-      <span class="copy-hint">Copy</span>
+    <div class="install-group fade-in" style="margin-bottom: 28px; animation: none; opacity: 1;">
+      <div class="install-tabs">
+        <button class="install-tab active" onclick="switchInstall(this, 'brew')">Homebrew</button>
+        <button class="install-tab" onclick="switchInstall(this, 'go')">Go Install</button>
+      </div>
+      <div class="install-bar install-cmd active" data-method="brew" onclick="copyInstall(this)">
+        <span class="prompt">$</span>
+        <span>brew install crackfetch/tap/brz</span>
+        <span class="copy-hint">Copy</span>
+      </div>
+      <div class="install-bar install-cmd" data-method="go" onclick="copyInstall(this)">
+        <span class="prompt">$</span>
+        <span>go install github.com/crackfetch/brz@latest</span>
+        <span class="copy-hint">Copy</span>
+      </div>
     </div>
 
     <div class="fade-in" style="display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;">
@@ -1484,9 +1533,19 @@ const observer = new IntersectionObserver((entries) => {
 
 document.querySelectorAll('.fade-in').forEach(el => observer.observe(el));
 
+// Switch install method tabs
+function switchInstall(tab, method) {
+  const group = tab.closest('.install-group');
+  group.querySelectorAll('.install-tab').forEach(t => t.classList.remove('active'));
+  group.querySelectorAll('.install-cmd').forEach(c => c.classList.remove('active'));
+  tab.classList.add('active');
+  group.querySelector(`.install-cmd[data-method="${method}"]`).classList.add('active');
+}
+
 // Copy install command
 function copyInstall(el) {
-  const text = 'go install github.com/crackfetch/brz@latest';
+  const spans = el.querySelectorAll('span:not(.prompt):not(.copy-hint)');
+  const text = Array.from(spans).map(s => s.textContent).join('').trim();
   navigator.clipboard.writeText(text).then(() => {
     const hint = el.querySelector('.copy-hint');
     hint.textContent = 'COPIED!';
