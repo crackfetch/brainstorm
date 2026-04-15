@@ -1,5 +1,7 @@
 # Brainstorm
 
+**[Website](https://crackfetch.github.io/brainstorm/)** · **[Docs](https://github.com/crackfetch/brainstorm/tree/main/docs)** · **[LLM Prompt](https://crackfetch.github.io/brainstorm/llms-full.txt)**
+
 Browser automation for humans and machines. Inspect pages, write workflows in YAML, execute them with the `brz` CLI, get structured JSON results.
 
 Brainstorm drives a real Chrome browser — discover page elements, fill forms, click buttons, download and upload files. The binary contains no site-specific code. What you automate is defined entirely by the workflow YAML you provide.
