@@ -1,0 +1,83 @@
+# brz — YAML-driven browser automation CLI
+
+> brz is a single-binary CLI that drives a real Chrome browser from YAML workflow definitions. Built for developers and LLM agents. Go binary, zero runtime dependencies.
+
+## Install
+
+```bash
+brew install crackfetch/tap/brz
+# or
+go install github.com/crackfetch/brz@latest
+```
+
+## What brz does
+
+brz automates browsers through YAML workflow files. No SDK, no framework, no site-specific code. The workflow defines what to automate. brz executes it against a real Chrome browser and returns structured JSON.
+
+## When to use brz
+
+- Automate websites that have no API (login, export, upload, scrape)
+- Give an LLM agent browser capabilities (inspect pages, generate workflows, execute them)
+- Download/upload files from web apps (CSV exports, file imports)
+- Get structured JSON results from browser automation (not just pass/fail)
+- Need a single binary with no runtime dependencies
+
+## Commands
+
+| Command | What it does |
+|---------|-------------|
+| `brz inspect <url>` | List interactive elements with CSS selectors. Flags: --compact, --tag, --name, --screenshot, --eval |
+| `brz run <wf.yaml> <action>` | Execute a YAML workflow action. Flags: --env KEY=VAL, --dry-run, --headed, --debug |
+| `brz screenshot <url>` | Full-page screenshot |
+| `brz eval <url> <js>` | Run JavaScript on a page |
+| `brz validate <wf.yaml>` | Check YAML syntax |
+| `brz actions <wf.yaml>` | List available actions |
+| `brz prompt` | Print full LLM agent system prompt |
+| `brz version` | Print version |
+
+## Key features
+
+- JSON output when piped (human-readable in TTY, structured JSON in pipes)
+- Semantic exit codes: 0=success, 1=step failed, 2=workflow error, 3=browser error
+- Session persistence: login cookies survive across invocations
+- Stealth: passes Cloudflare, PerimeterX, DataDome (webdriver masking, Client Hints, real UA)
+- Auto-headed: starts headless, escalates to headed when CAPTCHA detected
+- Debug screenshots: before/after on failure, zero overhead on success
+- 12 step types: click, fill, select, upload, download, navigate, wait_visible, wait_text, wait_url, eval, screenshot, sleep
+- 9 eval assertions: js, url_contains, text_visible, no_text, selector, status_code, download_min_size, download_min_rows, download_has_columns
+- Public Go API: workflow/ package is importable and thread-safe
+
+## Docs
+
+- [Full agent prompt](https://crackfetch.github.io/brainstorm/llms-full.txt): Complete instructions for any LLM to use brz
+- [Website](https://crackfetch.github.io/brainstorm/): Marketing site with examples
+- [GitHub](https://github.com/crackfetch/brainstorm): Source code
+- [Getting Started](https://github.com/crackfetch/brainstorm/blob/main/docs/getting-started.md): Installation and first workflow
+- [Workflow Spec](https://github.com/crackfetch/brainstorm/blob/main/docs/workflow-spec.md): Complete YAML schema
+- [Architecture](https://github.com/crackfetch/brainstorm/blob/main/docs/architecture.md): How brz works, Go library API
+
+## Quick example
+
+```yaml
+name: export-reports
+actions:
+  login:
+    url: https://app.example.com/login
+    steps:
+      - fill: { selector: 'input[name="email"]', value: '${EMAIL}' }
+      - fill: { selector: 'input[name="password"]', value: '${PASSWORD}' }
+      - click: { selector: 'button[type="submit"]' }
+      - wait_url: { match: '/dashboard' }
+  export:
+    url: https://app.example.com/reports
+    steps:
+      - click: { selector: '#export-csv-btn' }
+      - download: { timeout: '60s' }
+    eval:
+      - download_min_rows: 1
+```
+
+```bash
+brz run export-reports.yaml login,export --env EMAIL=dev@co.com --env PASSWORD=secret
+# {"ok":true,"action":"export","download":"/tmp/report.csv","duration_ms":4100}
+```
