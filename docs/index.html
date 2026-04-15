@@ -609,6 +609,72 @@
     opacity: 0.4;
   }
 
+  /* === USE CASES === */
+  .usecase-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 2px;
+    background: var(--border);
+  }
+  .usecase-card {
+    background: var(--surface);
+    padding: 28px 24px;
+    transition: background 0.15s;
+    position: relative;
+  }
+  .usecase-card:hover { background: var(--surface-alt); }
+  .usecase-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: var(--magenta);
+    opacity: 0;
+    transition: opacity 0.2s;
+  }
+  .usecase-card:hover::before { opacity: 1; }
+  .usecase-icon {
+    font-family: var(--font-pixel);
+    font-size: 18px;
+    margin-bottom: 16px;
+    line-height: 1;
+  }
+  .usecase-card h3 {
+    font-family: var(--font-sans);
+    font-size: 17px;
+    font-weight: 700;
+    color: var(--text-bright);
+    margin-bottom: 10px;
+    letter-spacing: -0.01em;
+  }
+  .usecase-card p {
+    font-size: 14px;
+    color: var(--muted);
+    line-height: 1.65;
+  }
+  .usecase-card .usecase-example {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--cyan);
+    margin-top: 12px;
+    padding: 8px 10px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    display: block;
+    overflow-x: auto;
+  }
+
+  .why-lead {
+    font-size: 17px;
+    color: var(--text);
+    max-width: 640px;
+    line-height: 1.75;
+    margin-bottom: 48px;
+  }
+  .why-lead strong {
+    color: var(--text-bright);
+  }
+
   /* === HOW IT WORKS === */
   .flow-steps {
     display: grid;
@@ -1118,6 +1184,63 @@
     </div>
   </div>
 </header>
+
+<hr class="divider">
+
+<!-- WHY BRZ -->
+<section id="why">
+  <div class="container">
+    <div class="section-label fade-in">// Why brz</div>
+    <h2 class="section-title fade-in">The website has no API. Now what?</h2>
+    <p class="why-lead fade-in">
+      Most of the software you rely on every day doesn't give you an API. No export button. No webhook. No way to get your own data out, or to stop doing the same 15 clicks every morning. <strong>brz automates the browser you're already using.</strong> You describe the steps in a simple YAML file, and brz does the clicking for you, returning structured data you can actually use.
+    </p>
+
+    <div class="usecase-grid fade-in">
+      <div class="usecase-card">
+        <div class="usecase-icon">📦</div>
+        <h3>Get your data out</h3>
+        <p>You use a web app for work. It has your sales, your inventory, your reports. But it has no API and no bulk export. brz logs in, navigates to the export page, clicks the button, and downloads the CSV. Every day if you want.</p>
+        <code class="usecase-example">brz run exports.yaml login,download-report</code>
+      </div>
+
+      <div class="usecase-card">
+        <div class="usecase-icon">🔁</div>
+        <h3>Stop doing the same clicks</h3>
+        <p>You log in, click Settings, click Export, wait for a spinner, download a file, then upload it somewhere else. You do this every week. brz turns that into one command you can run from your terminal or schedule with cron.</p>
+        <code class="usecase-example">brz run weekly-sync.yaml export,upload</code>
+      </div>
+
+      <div class="usecase-card">
+        <div class="usecase-icon">🤖</div>
+        <h3>Give your AI a browser</h3>
+        <p>You're building an agent with Claude or GPT and it needs to interact with a website. brz gives your LLM real browser capabilities: inspect a page to find form fields, generate a YAML workflow, execute it, and get JSON back in its tool-use loop.</p>
+        <code class="usecase-example">brz inspect $URL --compact --json</code>
+      </div>
+
+      <div class="usecase-card">
+        <div class="usecase-icon">🔄</div>
+        <h3>Move data between apps</h3>
+        <p>App A has the data. App B needs it. Neither has an API. brz exports from one and uploads to the other in a single chained workflow. Login cookies persist between runs, so authentication is a one-time cost.</p>
+        <code class="usecase-example">brz run sync.yaml export-a,import-b</code>
+      </div>
+
+      <div class="usecase-card">
+        <div class="usecase-icon">📊</div>
+        <h3>Monitor without an API</h3>
+        <p>You need to know when a price changes, when inventory drops below a threshold, or when a dashboard metric hits a number. brz can visit the page, run JavaScript to extract the value, and return it as JSON for your script to act on.</p>
+        <code class="usecase-example">brz eval $URL "document.querySelector('.price').textContent"</code>
+      </div>
+
+      <div class="usecase-card">
+        <div class="usecase-icon">✅</div>
+        <h3>Verify it actually worked</h3>
+        <p>Other automation tools tell you "I clicked the button." brz tells you whether the export had rows, whether the CSV had the right columns, whether the page ended up at the right URL. Eval assertions verify the result, not just the action.</p>
+        <code class="usecase-example">eval: [download_min_rows: 1, url_contains: "/success"]</code>
+      </div>
+    </div>
+  </div>
+</section>
 
 <hr class="divider">
 
