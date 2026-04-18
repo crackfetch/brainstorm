@@ -29,7 +29,7 @@ func WithProfileDir(dir string) Option {
 // detection on login pages that check for active DevTools connections. After
 // the user logs in manually, call ConnectAfterLogin() to establish CDP.
 // successURL is a substring the browser URL must contain after login (e.g.
-// "store.tcgplayer.com/admin").
+// "example.com/dashboard").
 func WithLoginURL(loginURL, successURL string) Option {
 	return func(e *Executor) {
 		e.loginURL = loginURL

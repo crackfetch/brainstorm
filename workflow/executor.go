@@ -1029,7 +1029,7 @@ func (e *Executor) doSelect(s *SelectStep) error {
 	}`
 
 	// Retry within the shared deadline — the element may start disabled and
-	// become enabled after async option loading (e.g., TCGplayer's AJAX-populated dropdowns).
+	// become enabled after async option loading (e.g., AJAX-populated dropdowns).
 	pollInterval := 500 * time.Millisecond
 	for {
 		res, err := el.Eval(js, value, text)
