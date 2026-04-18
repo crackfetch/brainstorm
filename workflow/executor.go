@@ -82,6 +82,16 @@ type Executor struct {
 	// WaitDownload to be called BEFORE the click that triggers the download.
 	pendingDownloadWait func() *proto.PageDownloadWillBegin
 	pendingDownloadDir  string
+
+	// loginURL is the URL to open for manual login before connecting CDP.
+	// When set, Start() launches Chrome headed with this URL but does NOT
+	// connect CDP. Call ConnectAfterLogin() after the user logs in.
+	loginURL string
+	// loginSuccessURL is a substring the URL must contain after login.
+	loginSuccessURL string
+	// controlURL is the CDP WebSocket URL, stored between Start() and
+	// ConnectAfterLogin() when loginURL is set.
+	controlURL string
 }
 
 // NewExecutor creates an executor with browser configuration.
@@ -303,6 +313,13 @@ func (e *Executor) startLocked() error {
 
 	l := e.buildLauncher()
 
+	// When loginURL is set, launch Chrome directly (not via rod's launcher)
+	// to avoid both CDP detection and "Opening in existing browser session"
+	// issues. Rod's launcher is only used later in ConnectAfterLogin().
+	if e.loginURL != "" {
+		return e.launchForLogin(l)
+	}
+
 	controlURL, err := l.Launch()
 	if err != nil && e.profileDir != "" && strings.Contains(err.Error(), "SingletonLock") {
 		if e.removeStaleSingletonLock() {
@@ -314,6 +331,71 @@ func (e *Executor) startLocked() error {
 		return fmt.Errorf("launch browser: %w", err)
 	}
 
+	// Delayed connection: store the control URL and return without
+	// connecting CDP. Chrome is running with the login page open.
+	if e.loginURL != "" {
+		e.controlURL = controlURL
+		return nil
+	}
+
+	return e.connectCDP(controlURL)
+}
+
+// launchForLogin starts Chrome directly (bypassing rod's launcher) with the
+// login URL and a remote debugging port. This avoids two problems:
+// 1. Rod's launcher connects CDP immediately, which triggers bot detection
+// 2. On macOS, Chrome may attach to an existing instance instead of opening new
+//
+// The caller must invoke ConnectAfterLogin() after the user logs in.
+func (e *Executor) launchForLogin(l *launcher.Launcher) error {
+	// Find the Chrome binary path
+	bin := l.Get("rod-bin")
+	if bin == "" {
+		if path, exists := launcher.LookPath(); exists {
+			bin = path
+		}
+	}
+	if bin == "" {
+		return fmt.Errorf("Chrome not found — install Google Chrome")
+	}
+
+	// Pick a fixed debug port
+	const debugPort = "9222"
+
+	args := []string{
+		"--remote-debugging-port=" + debugPort,
+		"--no-first-run",
+		"--no-default-browser-check",
+		"--disable-blink-features=AutomationControlled",
+	}
+	if e.profileDir != "" {
+		absDir, _ := filepath.Abs(e.profileDir)
+		args = append(args, "--user-data-dir="+absDir)
+	}
+
+	vp := DefaultViewport()
+	if e.workflow != nil && e.workflow.Viewport != nil {
+		vp = *e.workflow.Viewport
+	}
+	args = append(args, fmt.Sprintf("--window-size=%d,%d", vp.Width, vp.Height))
+	args = append(args, "--window-position=100,100")
+	args = append(args, e.loginURL)
+
+	cmd := exec.Command(bin, args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("launch Chrome for login: %w", err)
+	}
+
+	// Store the control URL for ConnectAfterLogin()
+	e.controlURL = "ws://127.0.0.1:" + debugPort
+
+	return nil
+}
+
+// connectCDP establishes the CDP connection to a running Chrome.
+func (e *Executor) connectCDP(controlURL string) error {
 	browser := rod.New().ControlURL(controlURL)
 	if err := browser.Connect(); err != nil {
 		return fmt.Errorf("connect to browser: %w", err)
@@ -331,6 +413,60 @@ func (e *Executor) startLocked() error {
 	e.userAgent = resolveUserAgent(browserUA)
 	e.userAgentMeta = buildUserAgentMetadata(browserProduct)
 
+	return nil
+}
+
+// NeedsLogin returns true if the executor was configured with WithLoginURL
+// and CDP has not yet been connected.
+func (e *Executor) NeedsLogin() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.loginURL != "" && e.browser == nil && e.controlURL != ""
+}
+
+// LoginURL returns the login URL configured via WithLoginURL, or empty string.
+func (e *Executor) LoginURL() string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.loginURL
+}
+
+// LoginSuccessURL returns the success URL substring configured via WithLoginURL.
+func (e *Executor) LoginSuccessURL() string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.loginSuccessURL
+}
+
+// ConnectAfterLogin establishes the CDP connection to Chrome that was launched
+// by Start() with WithLoginURL. Call this after the user has completed login.
+// After this returns, the executor is fully functional for RunAction() etc.
+func (e *Executor) ConnectAfterLogin() error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if e.controlURL == "" {
+		return fmt.Errorf("no pending login session — call Start() with WithLoginURL first")
+	}
+	if e.browser != nil {
+		return nil // already connected
+	}
+
+	// Resolve the WebSocket URL from the debug port's HTTP endpoint
+	wsURL, err := launcher.ResolveURL(strings.TrimPrefix(e.controlURL, "ws://"))
+	if err != nil {
+		return fmt.Errorf("resolve Chrome debug URL: %w", err)
+	}
+
+	if err := e.connectCDP(wsURL); err != nil {
+		return err
+	}
+
+	// Clear loginURL so subsequent restart() calls use normal CDP flow.
+	// The session cookies are now in Chrome's memory — no need to re-login
+	// unless the Chrome process dies.
+	e.loginURL = ""
+	e.controlURL = ""
 	return nil
 }
 
@@ -893,7 +1029,7 @@ func (e *Executor) doSelect(s *SelectStep) error {
 	}`
 
 	// Retry within the shared deadline — the element may start disabled and
-	// become enabled after async option loading (e.g., TCGplayer's AJAX-populated dropdowns).
+	// become enabled after async option loading (e.g., AJAX-populated dropdowns).
 	pollInterval := 500 * time.Millisecond
 	for {
 		res, err := el.Eval(js, value, text)

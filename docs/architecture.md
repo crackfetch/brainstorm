@@ -172,4 +172,4 @@ page := exec.Page()
 
 The Executor is safe for concurrent use — all public methods are mutex-protected. Private methods assume the caller holds the lock.
 
-This is how `hoard-agent` uses brz: it imports the workflow package, bundles a TCGplayer workflow YAML, and adds Hoard-specific orchestration (API client, polling loop, CSV parsing) on top.
+Example integration: a downstream agent imports the workflow package, bundles a site-specific workflow YAML, and adds its own orchestration (API client, polling loop, data parsing) on top.
