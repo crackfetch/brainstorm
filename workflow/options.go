@@ -23,3 +23,16 @@ func WithDebug(b bool) Option {
 func WithProfileDir(dir string) Option {
 	return func(e *Executor) { e.profileDir = dir }
 }
+
+// WithLoginURL configures delayed CDP connection. When set, Start() launches
+// Chrome headed with this URL but does NOT connect CDP — this avoids bot
+// detection on login pages that check for active DevTools connections. After
+// the user logs in manually, call ConnectAfterLogin() to establish CDP.
+// successURL is a substring the browser URL must contain after login (e.g.
+// "store.tcgplayer.com/admin").
+func WithLoginURL(loginURL, successURL string) Option {
+	return func(e *Executor) {
+		e.loginURL = loginURL
+		e.loginSuccessURL = successURL
+	}
+}
