@@ -3,6 +3,7 @@ package workflow
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/url"
 	"os"
@@ -382,8 +383,12 @@ func (e *Executor) launchForLogin(l *launcher.Launcher) error {
 	args = append(args, e.loginURL)
 
 	cmd := exec.Command(bin, args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stdout = io.Discard
+	if e.debug {
+		cmd.Stderr = os.Stderr
+	} else {
+		cmd.Stderr = io.Discard
+	}
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("launch Chrome for login: %w", err)
 	}
