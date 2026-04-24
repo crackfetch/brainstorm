@@ -1,8 +1,11 @@
 package workflow
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestBuildLauncher_HeadlessModeFlag asserts that buildLauncher emits the
@@ -173,6 +176,68 @@ func TestBuildLauncher_LegacyHeadlessFallback(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestDiscoverDebugPort verifies the DevToolsActivePort file polling logic.
+func TestDiscoverDebugPort(t *testing.T) {
+	t.Run("reads port from existing file", func(t *testing.T) {
+		dir := t.TempDir()
+		portFile := filepath.Join(dir, "DevToolsActivePort")
+		// Chrome writes port then ws path, separated by newline
+		if err := os.WriteFile(portFile, []byte("54321\n/devtools/browser/abc123"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		port, err := discoverDebugPort(dir, time.Second)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if port != "54321" {
+			t.Errorf("got port %q, want %q", port, "54321")
+		}
+	})
+
+	t.Run("polls until file appears", func(t *testing.T) {
+		dir := t.TempDir()
+		portFile := filepath.Join(dir, "DevToolsActivePort")
+		// Write the file after a short delay to simulate Chrome startup latency
+		go func() {
+			time.Sleep(200 * time.Millisecond)
+			os.WriteFile(portFile, []byte("12345\n/devtools/browser/xyz"), 0644)
+		}()
+		port, err := discoverDebugPort(dir, 2*time.Second)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if port != "12345" {
+			t.Errorf("got port %q, want %q", port, "12345")
+		}
+	})
+
+	t.Run("times out when file never appears", func(t *testing.T) {
+		dir := t.TempDir()
+		_, err := discoverDebugPort(dir, 150*time.Millisecond)
+		if err == nil {
+			t.Fatal("expected timeout error, got nil")
+		}
+	})
+
+	t.Run("ignores malformed content", func(t *testing.T) {
+		dir := t.TempDir()
+		portFile := filepath.Join(dir, "DevToolsActivePort")
+		// Write garbage first, then valid content (simulates partial write)
+		os.WriteFile(portFile, []byte("not-a-port\n"), 0644)
+		go func() {
+			time.Sleep(100 * time.Millisecond)
+			os.WriteFile(portFile, []byte("9876\n/devtools/browser/ok"), 0644)
+		}()
+		port, err := discoverDebugPort(dir, time.Second)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if port != "9876" {
+			t.Errorf("got port %q, want %q", port, "9876")
+		}
+	})
 }
 
 // containsArg reports whether args contains the given exact arg, OR an arg

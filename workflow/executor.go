@@ -93,6 +93,9 @@ type Executor struct {
 	// controlURL is the CDP WebSocket URL, stored between Start() and
 	// ConnectAfterLogin() when loginURL is set.
 	controlURL string
+	// debugPort is the actual port Chrome bound to when launched with
+	// --remote-debugging-port=0. Set by launchForLogin() after Chrome starts.
+	debugPort string
 }
 
 // NewExecutor creates an executor with browser configuration.
@@ -347,6 +350,10 @@ func (e *Executor) startLocked() error {
 // 1. Rod's launcher connects CDP immediately, which triggers bot detection
 // 2. On macOS, Chrome may attach to an existing instance instead of opening new
 //
+// Chrome is launched with --remote-debugging-port=0 so the OS assigns a free
+// port, eliminating collisions with other Chrome instances. The actual port is
+// discovered from the DevToolsActivePort file Chrome writes to profileDir.
+//
 // The caller must invoke ConnectAfterLogin() after the user logs in.
 func (e *Executor) launchForLogin(l *launcher.Launcher) error {
 	// Find the Chrome binary path
@@ -360,19 +367,18 @@ func (e *Executor) launchForLogin(l *launcher.Launcher) error {
 		return fmt.Errorf("Chrome not found — install Google Chrome")
 	}
 
-	// Pick a fixed debug port
-	const debugPort = "9222"
+	if e.profileDir == "" {
+		return fmt.Errorf("profileDir is required when using WithLoginURL (needed for debug port discovery)")
+	}
 
 	args := []string{
-		"--remote-debugging-port=" + debugPort,
+		"--remote-debugging-port=0", // OS assigns a free port; actual port read from DevToolsActivePort
 		"--no-first-run",
 		"--no-default-browser-check",
 		"--disable-blink-features=AutomationControlled",
 	}
-	if e.profileDir != "" {
-		absDir, _ := filepath.Abs(e.profileDir)
-		args = append(args, "--user-data-dir="+absDir)
-	}
+	absDir, _ := filepath.Abs(e.profileDir)
+	args = append(args, "--user-data-dir="+absDir)
 
 	vp := DefaultViewport()
 	if e.workflow != nil && e.workflow.Viewport != nil {
@@ -393,10 +399,39 @@ func (e *Executor) launchForLogin(l *launcher.Launcher) error {
 		return fmt.Errorf("launch Chrome for login: %w", err)
 	}
 
-	// Store the control URL for ConnectAfterLogin()
-	e.controlURL = "ws://127.0.0.1:" + debugPort
+	// Discover the actual port Chrome bound to. Chrome writes this to
+	// <profileDir>/DevToolsActivePort after binding. We poll for up to 5s.
+	port, err := discoverDebugPort(absDir, 5*time.Second)
+	if err != nil {
+		cmd.Process.Kill()
+		return fmt.Errorf("discover debug port: %w", err)
+	}
 
+	e.debugPort = port
+	e.controlURL = "ws://127.0.0.1:" + port
 	return nil
+}
+
+// discoverDebugPort polls Chrome's DevToolsActivePort file until the actual
+// debug port appears. Chrome writes this file after binding to the OS-assigned
+// port when launched with --remote-debugging-port=0.
+//
+// File format: "<port>\n<ws-path>". Only the first line (port number) is used.
+func discoverDebugPort(profileDir string, timeout time.Duration) (string, error) {
+	portFile := filepath.Join(profileDir, "DevToolsActivePort")
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		data, err := os.ReadFile(portFile)
+		if err == nil && len(data) > 0 {
+			line := strings.SplitN(string(data), "\n", 2)[0]
+			line = strings.TrimSpace(line)
+			if port, err := strconv.Atoi(line); err == nil && port > 0 {
+				return line, nil
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return "", fmt.Errorf("Chrome debug port not found after %s — DevToolsActivePort not written to %s", timeout, profileDir)
 }
 
 // connectCDP establishes the CDP connection to a running Chrome.
@@ -434,6 +469,14 @@ func (e *Executor) LoginURL() string {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.loginURL
+}
+
+// DebugPort returns the actual CDP debug port Chrome is listening on.
+// Only valid after Start() has been called with WithLoginURL and Chrome has started.
+func (e *Executor) DebugPort() string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.debugPort
 }
 
 // LoginSuccessURL returns the success URL substring configured via WithLoginURL.

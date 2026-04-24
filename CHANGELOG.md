@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Fixed
+- `launchForLogin` now uses `--remote-debugging-port=0` so the OS assigns a free port, eliminating collisions with other Chrome instances that happen to hold port 9222.
+- Port is discovered from `<profileDir>/DevToolsActivePort` after Chrome starts (polled up to 5s). New `DebugPort()` getter exposes it to callers.
+- `profileDir` is now required when `WithLoginURL` is set (it was always needed in practice; now enforced explicitly with a clear error).
+
 ## [0.9.1.0] - 2026-04-14
 
 ### Added
