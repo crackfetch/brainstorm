@@ -377,6 +377,13 @@ func (e *Executor) launchForLogin(l *launcher.Launcher) error {
 		"--no-default-browser-check",
 		"--disable-blink-features=AutomationControlled",
 	}
+	// Linux CI/container environments require --no-sandbox to start Chrome at
+	// all. Without it Chrome crashes before binding the debug port, so
+	// DevToolsActivePort is never written. --disable-dev-shm-usage prevents
+	// crashes caused by /dev/shm being too small in Docker/GitHub Actions.
+	if runtime.GOOS == "linux" {
+		args = append(args, "--no-sandbox", "--disable-dev-shm-usage")
+	}
 	absDir, _ := filepath.Abs(e.profileDir)
 	args = append(args, "--user-data-dir="+absDir)
 
