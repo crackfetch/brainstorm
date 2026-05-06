@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -396,19 +397,40 @@ func (e *Executor) launchForLogin(l *launcher.Launcher) error {
 
 	cmd := exec.Command(bin, args...)
 	cmd.Stdout = io.Discard
+	// Always capture stderr so we can report Chrome's error output if it
+	// crashes during startup. In debug mode, tee to os.Stderr as well.
+	var stderrBuf bytes.Buffer
 	if e.debug {
-		cmd.Stderr = os.Stderr
+		cmd.Stderr = io.MultiWriter(os.Stderr, &stderrBuf)
 	} else {
-		cmd.Stderr = io.Discard
+		cmd.Stderr = &stderrBuf
 	}
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("launch Chrome for login: %w", err)
 	}
 
+	// Monitor Chrome process in a goroutine so we can detect early crashes.
+	chromeDone := make(chan error, 1)
+	go func() { chromeDone <- cmd.Wait() }()
+
 	// Discover the actual port Chrome bound to. Chrome writes this to
-	// <profileDir>/DevToolsActivePort after binding. We poll for up to 5s.
-	port, err := discoverDebugPort(absDir, 5*time.Second)
+	// <profileDir>/DevToolsActivePort after binding. We poll for up to 15s
+	// (Windows can be slow due to antivirus scanning or cold-start delays).
+	timeout := 5 * time.Second
+	if runtime.GOOS == "windows" {
+		timeout = 15 * time.Second
+	}
+	port, err := discoverDebugPort(absDir, timeout, chromeDone)
 	if err != nil {
+		// Include Chrome's stderr in the error if available.
+		stderr := strings.TrimSpace(stderrBuf.String())
+		if stderr != "" {
+			// Cap to avoid huge error messages.
+			if len(stderr) > 500 {
+				stderr = stderr[:500] + "..."
+			}
+			err = fmt.Errorf("%w\nChrome stderr: %s", err, stderr)
+		}
 		killProcessTree(cmd.Process)
 		return fmt.Errorf("discover debug port: %w", err)
 	}
@@ -422,11 +444,27 @@ func (e *Executor) launchForLogin(l *launcher.Launcher) error {
 // debug port appears. Chrome writes this file after binding to the OS-assigned
 // port when launched with --remote-debugging-port=0.
 //
+// If chromeDone is non-nil it is checked each iteration so we can fail fast
+// when Chrome crashes during startup instead of waiting the full timeout.
+//
 // File format: "<port>\n<ws-path>". Only the first line (port number) is used.
-func discoverDebugPort(profileDir string, timeout time.Duration) (string, error) {
+func discoverDebugPort(profileDir string, timeout time.Duration, chromeDone <-chan error) (string, error) {
 	portFile := filepath.Join(profileDir, "DevToolsActivePort")
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
+		// Check if Chrome crashed before we even got the port file.
+		if chromeDone != nil {
+			select {
+			case waitErr := <-chromeDone:
+				if waitErr != nil {
+					return "", fmt.Errorf("Chrome exited during startup: %w", waitErr)
+				}
+				return "", fmt.Errorf("Chrome exited during startup with status 0 (unexpected)")
+			default:
+				// Still running — continue polling.
+			}
+		}
+
 		data, err := os.ReadFile(portFile)
 		if err == nil && len(data) > 0 {
 			line := strings.SplitN(string(data), "\n", 2)[0]
