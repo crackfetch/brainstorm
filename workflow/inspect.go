@@ -13,7 +13,7 @@ type InspectResult struct {
 	DurationMs int64         `json:"duration_ms"`
 	Error      string        `json:"error,omitempty"`
 	Screenshot string        `json:"screenshot,omitempty"`
-	EvalResult any `json:"eval_result,omitempty"`
+	EvalResult any           `json:"eval_result,omitempty"`
 }
 
 // ElementInfo describes a single interactive DOM element.
@@ -94,14 +94,11 @@ func ExtractTagFromSelector(selector string) string {
 	if selector == "" {
 		return ""
 	}
-	// Take the last segment after any CSS combinator (space, >, +, ~).
-	// "div > button.submit" -> "button.submit"
-	seg := selector
-	for i := len(seg) - 1; i >= 0; i-- {
-		c := seg[i]
-		if c == ' ' || c == '>' || c == '+' || c == '~' {
-			seg = strings.TrimLeft(seg[i+1:], " >+~")
-			break
+	seg := lastSelectorSegment(selector)
+	if strings.HasPrefix(seg, ":is(") {
+		closeIdx := strings.Index(seg, ")")
+		if closeIdx > len(":is(") {
+			seg = strings.TrimSpace(strings.Split(seg[len(":is("):closeIdx], ",")[0])
 		}
 	}
 	// Find where the tag ends (at first #, ., [, or :)
@@ -113,6 +110,42 @@ func ExtractTagFromSelector(selector string) string {
 		}
 	}
 	return strings.ToLower(seg[:end])
+}
+
+func lastSelectorSegment(selector string) string {
+	selector = strings.TrimSpace(selector)
+	inAttr := false
+	var quote byte
+	for i := len(selector) - 1; i >= 0; i-- {
+		c := selector[i]
+		switch {
+		case quote != 0:
+			if c == quote {
+				quote = 0
+			}
+		case c == '"' || c == '\'':
+			quote = c
+		case c == ']':
+			inAttr = true
+		case c == '[':
+			inAttr = false
+		case !inAttr && (c == ' ' || c == '>' || c == '+' || c == '~'):
+			return strings.TrimSpace(selector[i+1:])
+		}
+	}
+	return selector
+}
+
+// SimilarElementsSelectorForStepSelector returns the selector used to capture
+// nearby recovery candidates for a failed workflow selector.
+func SimilarElementsSelectorForStepSelector(selector string) string {
+	tag := ExtractTagFromSelector(selector)
+	switch tag {
+	case "input", "button", "a":
+		return "input,button,a"
+	default:
+		return tag
+	}
 }
 
 // StepSelector returns the CSS selector from a step, or "" if the step
@@ -132,12 +165,12 @@ func StepSelector(step Step) string {
 	}
 }
 
-// SimilarElementsJS is JavaScript that finds up to 5 elements of a given tag type.
+// SimilarElementsJS is JavaScript that finds up to 5 elements matching a selector.
 // Called on step failure to provide context about what elements ARE on the page.
-// Takes a tag name parameter and returns a JSON array of element descriptors.
-const SimilarElementsJS = `(tag) => {
+// Takes a selector parameter and returns a JSON array of element descriptors.
+const SimilarElementsJS = `(selector) => {
 	const maxResults = 5;
-	const elements = tag ? document.querySelectorAll(tag) : document.querySelectorAll('button, input, a, select');
+	const elements = selector ? document.querySelectorAll(selector) : document.querySelectorAll('button, input, a, select');
 	const results = [];
 
 	for (let i = 0; i < elements.length && results.length < maxResults; i++) {
@@ -161,6 +194,9 @@ const SimilarElementsJS = `(tag) => {
 		info.tag = el.tagName.toLowerCase();
 		if (el.type) info.type = el.type;
 		if (el.name) info.name = el.name;
+		if (el.placeholder) info.placeholder = el.placeholder;
+		if (el.getAttribute('role')) info.role = el.getAttribute('role');
+		if (el.value && ['submit', 'button', 'reset', 'hidden'].includes(el.type)) info.value = el.value;
 		const text = (el.textContent || '').trim().substring(0, 80);
 		if (text && ['button', 'a'].includes(info.tag)) info.text = text;
 

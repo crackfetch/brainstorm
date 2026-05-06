@@ -15,16 +15,18 @@ func TestExtractTagFromSelector(t *testing.T) {
 		{"select#country", "select"},
 		{"div.container", "div"},
 		// Edge cases
-		{"#just-id", ""},           // no tag, just ID
-		{".just-class", ""},        // no tag, just class
-		{"[role=\"button\"]", ""},   // attribute selector, no tag
-		{"", ""},                    // empty
-		{"BUTTON.submit", "button"},              // uppercase -> lowercase
-		{"div > button.submit", "button"},         // child combinator
-		{"ul li a.link", "a"},                     // descendant combinator
-		{"div + p.intro", "p"},                    // adjacent sibling
-		{"h2 ~ p", "p"},                           // general sibling
-		{"div > ul > li > a#link", "a"},           // deep nesting
+		{"#just-id", ""},                  // no tag, just ID
+		{".just-class", ""},               // no tag, just class
+		{"[role=\"button\"]", ""},         // attribute selector, no tag
+		{"", ""},                          // empty
+		{"BUTTON.submit", "button"},       // uppercase -> lowercase
+		{"div > button.submit", "button"}, // child combinator
+		{"ul li a.link", "a"},             // descendant combinator
+		{"div + p.intro", "p"},            // adjacent sibling
+		{"h2 ~ p", "p"},                   // general sibling
+		{"div > ul > li > a#link", "a"},   // deep nesting
+		{`pricing-actions input[value="Export From Live"]`, "input"}, // spaces inside attr
+		{`pricing-actions :is(input,button,a)[value^="Export"][value$="Live"]`, "input"},
 	}
 
 	for _, tt := range tests {
@@ -32,6 +34,27 @@ func TestExtractTagFromSelector(t *testing.T) {
 			result := ExtractTagFromSelector(tt.selector)
 			if result != tt.expected {
 				t.Errorf("ExtractTagFromSelector(%q) = %q, want %q", tt.selector, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestSimilarElementsSelectorForStepSelector(t *testing.T) {
+	tests := []struct {
+		selector string
+		expected string
+	}{
+		{`pricing-actions input[value="Export From Live"]`, "input,button,a"},
+		{`pricing-actions :is(input,button,a)[value^="Export"][value$="Live"]`, "input,button,a"},
+		{`button[data-testid="OrderIndex_SearchBar_btnExportOrders"]`, "input,button,a"},
+		{`select#CategoryId`, "select"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.selector, func(t *testing.T) {
+			result := SimilarElementsSelectorForStepSelector(tt.selector)
+			if result != tt.expected {
+				t.Errorf("SimilarElementsSelectorForStepSelector(%q) = %q, want %q", tt.selector, result, tt.expected)
 			}
 		})
 	}

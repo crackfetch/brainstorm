@@ -239,7 +239,9 @@ brz run my-workflow.yaml export | jq -r .download
 }
 ```
 
-On failure, `page_url` and `page_html` capture the page state at the moment the step failed, so agents can debug without re-running. If the action was auto-escalated from headless to headed (via `BRZ_HEADED=auto`), the result includes `"escalated": true`.
+On failure, `page_url` and `page_html` capture the page state at the moment the step failed, so agents can debug without re-running. Failed selector steps also include `page_elements`: up to 5 scoped recovery candidates from the current page. For click failures targeting `input`, `button`, or `a`, Brainstorm captures compatible action controls across all three tags because sites often swap submit inputs, buttons, and styled links. Use `text` for buttons/links and `value` for submit/button/reset inputs when deciding whether a candidate matches the step objective.
+
+If the action was auto-escalated from headless to headed (via `BRZ_HEADED=auto`), the result includes `"escalated": true`.
 
 ### Available Steps
 

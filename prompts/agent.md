@@ -114,6 +114,8 @@ Failure (includes `page_elements` with up to 5 similar selectors for agent conte
 {"ok": false, "action": "login", "error": "find element ...", "failed_step": 2, "step_type": "click", "screenshot": "/tmp/after.png", "screenshot_before": "/tmp/before.jpg", "page_elements": [{"selector": "button.btn-submit", "tag": "button", "text": "Submit"}]}
 ```
 
+`page_elements` is scoped recovery context, not a full DOM dump. For failed click targets on `input`, `button`, or `a` selectors, Brainstorm captures nearby compatible action controls across all three tags because sites often swap submit inputs, buttons, and styled links. For submit/button/reset inputs, use `value` as the visible label; buttons and links usually use `text`. Candidate objects may also include `type`, `name`, `placeholder`, and `role`.
+
 On failure, `screenshot_before` shows the page BEFORE the failed step ran (JPEG, ~50KB). Compare with `screenshot` (after) to understand what changed. Both are auto-captured with zero overhead on success.
 
 ### validate — check workflow syntax
@@ -318,7 +320,7 @@ When automating a new site:
 6. **Chain** actions in one session: `brz run workflow.yaml login,export --env EMAIL=x` (saves a cold-start)
 
 **On failure (exit code 1):**
-1. Check `page_elements` in the failure JSON — it includes up to 5 similar selectors from the current page
+1. Check `page_elements` in the failure JSON — it includes up to 5 similar selectors from the current page. Prefer matching the intended label from `text` or input `value`, not just selector shape.
 2. If `page_elements` isn't enough, re-inspect: `brz inspect <url> --tag button` to find the right selector
 3. Update selectors in your YAML and add `wait_visible` before clicks on dynamic content
 4. Use `--headed` to watch the browser and see what's happening visually
