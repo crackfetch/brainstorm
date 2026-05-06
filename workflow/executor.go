@@ -14,7 +14,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/go-rod/rod"
@@ -410,7 +409,7 @@ func (e *Executor) launchForLogin(l *launcher.Launcher) error {
 	// <profileDir>/DevToolsActivePort after binding. We poll for up to 5s.
 	port, err := discoverDebugPort(absDir, 5*time.Second)
 	if err != nil {
-		cmd.Process.Kill()
+		killProcessTree(cmd.Process)
 		return fmt.Errorf("discover debug port: %w", err)
 	}
 
@@ -438,7 +437,13 @@ func discoverDebugPort(profileDir string, timeout time.Duration) (string, error)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	return "", fmt.Errorf("Chrome debug port not found after %s — DevToolsActivePort not written to %s", timeout, profileDir)
+
+	// Provide diagnostic detail: did the file never appear, or did it contain bad data?
+	data, readErr := os.ReadFile(portFile)
+	if readErr != nil {
+		return "", fmt.Errorf("Chrome debug port not found after %s — DevToolsActivePort was never written to %s (check Chrome started correctly)", timeout, profileDir)
+	}
+	return "", fmt.Errorf("Chrome debug port not found after %s — DevToolsActivePort exists but contains invalid data: %q", timeout, string(data))
 }
 
 // connectCDP establishes the CDP connection to a running Chrome.
@@ -529,28 +534,46 @@ func (e *Executor) ConnectAfterLogin() error {
 // directory is held by a dead process. If so, it removes the lock file and
 // returns true. If a live process holds the lock, it returns false — we never
 // kill another process's Chrome.
+//
+// On Linux/macOS, SingletonLock is a symlink whose target encodes "hostname-pid".
+// On Windows, it is a regular file containing the PID as plain text.
 func (e *Executor) removeStaleSingletonLock() bool {
 	lockPath := filepath.Join(e.profileDir, "SingletonLock")
 
-	// SingletonLock is a symlink whose target encodes "hostname-pid".
+	// Try symlink first (Linux/macOS).
 	target, err := os.Readlink(lockPath)
 	if err != nil {
-		// Not a symlink or doesn't exist — try removing anyway.
+		// Not a symlink — on Windows, SingletonLock is a regular file.
+		// Try reading PID from file contents.
+		data, readErr := os.ReadFile(lockPath)
+		if readErr != nil {
+			// Doesn't exist or can't read — try removing anyway.
+			if os.Remove(lockPath) == nil {
+				log.Printf("Removed stale SingletonLock (unreadable)")
+				return true
+			}
+			return false
+		}
+		// Try parsing PID directly from file contents.
+		pidStr := strings.TrimSpace(string(data))
+		if pid, parseErr := strconv.Atoi(pidStr); parseErr == nil {
+			if isProcessAlive(pid) {
+				return false // Chrome is still running
+			}
+		}
+		// Process is dead or PID unparseable — remove the lock.
 		if os.Remove(lockPath) == nil {
-			log.Printf("Removed stale SingletonLock (unreadable link)")
+			log.Printf("Removed stale SingletonLock (owner process is dead)")
 			return true
 		}
 		return false
 	}
 
-	// Parse PID from "hostname-pid" format.
+	// Symlink path (Linux/macOS) — parse PID from "hostname-pid" format.
 	parts := strings.SplitN(target, "-", 2)
 	if len(parts) == 2 {
 		if pid, err := strconv.Atoi(parts[1]); err == nil {
-			// Signal 0 checks if the process exists without killing it.
-			proc, err := os.FindProcess(pid)
-			if err == nil && proc.Signal(syscall.Signal(0)) == nil {
-				// Process is alive — do not remove.
+			if isProcessAlive(pid) {
 				return false
 			}
 		}
