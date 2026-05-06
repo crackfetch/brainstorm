@@ -52,7 +52,7 @@ docs/                      Architecture, getting started, workflow YAML spec
 - **Discovery-first**: inspect/screenshot/eval commands let LLMs explore pages before writing workflows. `inspect --screenshot --compact` combines discovery + visual context in one browser launch.
 - **Multi-action**: `brz run wf.yaml action1,action2` chains actions in one browser session. Fail-fast on first failure.
 - **Dry-run**: `brz run wf.yaml action --dry-run` shows resolved steps without Chrome.
-- **Error context**: Step failures include `page_elements` (up to 5 similar selectors) to avoid re-inspect round-trips.
+- **Error context**: Step failures include `page_elements` (up to 5 similar selectors) to avoid re-inspect round-trips. Click failures for `input`/`button`/`a` selectors capture compatible action controls across all three tags; agents should use button/link `text` and submit input `value` as candidate labels.
 - **Inspect filters**: `--tag input,button --name email --compact` reduces token output for agents.
 - **Workflow-driven**: All browser automation is defined in YAML. No site-specific code in the binary.
 - **LLM-friendly**: JSON output when piped, semantic exit codes (0/1/2/3), rich --help with schemas.

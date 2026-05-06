@@ -917,8 +917,8 @@ func (e *Executor) runSteps(name string, action Action) *ActionResult {
 
 			// Capture similar elements for agent context (helps avoid re-inspect round-trip).
 			if selector := StepSelector(step); selector != "" && e.page != nil {
-				tag := ExtractTagFromSelector(selector)
-				if elements := e.captureSimilarElements(tag); len(elements) > 0 {
+				similarSelector := SimilarElementsSelectorForStepSelector(selector)
+				if elements := e.captureSimilarElements(similarSelector); len(elements) > 0 {
 					result.PageElements = elements
 				}
 			}
@@ -1358,11 +1358,11 @@ func (e *Executor) capturePageState() (pageURL, pageHTML string) {
 // captureSimilarElements runs SimilarElementsJS on the current page to find
 // elements similar to the failed step's target. Returns up to 5 elements.
 // Returns nil on any error (defensive — don't mask the real failure).
-func (e *Executor) captureSimilarElements(tag string) []ElementInfo {
+func (e *Executor) captureSimilarElements(selector string) []ElementInfo {
 	if e.page == nil {
 		return nil
 	}
-	res, err := e.page.Timeout(2 * time.Second).Eval(SimilarElementsJS, tag)
+	res, err := e.page.Timeout(2*time.Second).Eval(SimilarElementsJS, selector)
 	if err != nil {
 		return nil
 	}
