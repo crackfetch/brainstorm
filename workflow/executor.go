@@ -393,7 +393,13 @@ func (e *Executor) launchForLogin(l *launcher.Launcher) error {
 	}
 	args = append(args, fmt.Sprintf("--window-size=%d,%d", vp.Width, vp.Height))
 	args = append(args, "--window-position=100,100")
-	args = append(args, e.loginURL)
+	// Use --app= instead of a bare URL argument. When Chrome sees a bare URL
+	// and another Chrome instance is already running, Windows Chrome delegates
+	// to the existing instance via a named pipe and exits with status 0. The
+	// --app= flag makes Chrome treat this as an app-mode launch, which bypasses
+	// the singleton delegation and starts a fully independent instance with its
+	// own debug port. The trade-off is no address bar, which the agent doesn't need.
+	args = append(args, "--app="+e.loginURL)
 
 	cmd := exec.Command(bin, args...)
 	cmd.Stdout = io.Discard
