@@ -160,9 +160,67 @@ func StepSelector(step Step) string {
 		return step.Select.Selector
 	case step.WaitVisible != nil:
 		return step.WaitVisible.Selector
+	case step.WaitEnabled != nil:
+		return step.WaitEnabled.Selector
 	default:
 		return ""
 	}
+}
+
+// summarizeNearbyElements renders up to limit elements as a single-line
+// human-readable hint suitable for embedding inside an error message. Each
+// entry is `<selector> (<text>)`; long text is truncated to 30 chars.
+//
+// Returns "" when there are no elements (caller skips the hint append).
+//
+// The intent: when click/fill/wait fails, a user reading just the error
+// message should see actionable selectors instead of having to dig into
+// the JSON ActionResult.PageElements. Hidden elements are skipped — a
+// hint that says "click .foo (hidden)" sends the user chasing the wrong
+// fix.
+func summarizeNearbyElements(elements []ElementInfo, limit int) string {
+	if len(elements) == 0 || limit <= 0 {
+		return ""
+	}
+	var parts []string
+	for _, el := range elements {
+		if el.Hidden {
+			continue
+		}
+		desc := elementDisplayText(el)
+		entry := el.Selector
+		if desc != "" {
+			entry += " (" + desc + ")"
+		}
+		parts = append(parts, entry)
+		if len(parts) >= limit {
+			break
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "Nearby visible elements: " + strings.Join(parts, ", ")
+}
+
+// elementDisplayText picks the most useful human-facing string for an
+// element: visible text first, then value (input), then placeholder, then
+// name, then role. Truncated to 30 runes (not bytes) to keep error
+// messages short while staying correct for non-ASCII labels.
+func elementDisplayText(el ElementInfo) string {
+	candidates := []string{el.Text, el.Value, el.Placeholder, el.Name, el.Role}
+	for _, c := range candidates {
+		c = strings.TrimSpace(c)
+		if c == "" {
+			continue
+		}
+		runes := []rune(c)
+		if len(runes) > 30 {
+			c = string(runes[:27]) + "..."
+		}
+		return c
+	}
+	return ""
 }
 
 // SimilarElementsJS is JavaScript that finds up to 5 elements matching a selector.

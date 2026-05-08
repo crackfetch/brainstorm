@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"regexp"
@@ -64,6 +65,52 @@ func LoadFromBytes(data []byte) (*Workflow, error) {
 	return &w, nil
 }
 
+// LoadStrictFromBytes parses workflow YAML with KnownFields enforcement —
+// any field name that doesn't match the Workflow / Action / Step schema
+// returns an error with a YAML line number. This catches typos like
+// `save_too:` (close to `save_to:`) at validate time instead of at run
+// time when the workflow silently misbehaves.
+//
+// Default Load / LoadFromBytes stays lenient so existing workflows that
+// rely on yaml.v3's default unknown-field behavior keep working. Callers
+// opt into strict by reaching for this function (driven by `validate
+// --strict` from the CLI).
+func LoadStrictFromBytes(data []byte) (*Workflow, error) {
+	var w Workflow
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(&w); err != nil {
+		// Decorate with field-name suggestions before wrapping. The
+		// inner err message is the only signal yaml.v3 gives us about
+		// which struct field was rejected, so we keep it as the source
+		// of truth and just append "Did you mean?" hints.
+		return nil, fmt.Errorf("parse workflow: %w", decorateStrictError(err))
+	}
+
+	if w.Name == "" {
+		return nil, fmt.Errorf("workflow: missing 'name' field")
+	}
+	if len(w.Actions) == 0 {
+		return nil, fmt.Errorf("workflow: no actions defined")
+	}
+
+	return &w, nil
+}
+
+// LoadStrict reads a YAML file and parses with KnownFields enforcement.
+// File-system equivalent of LoadStrictFromBytes.
+func LoadStrict(path string) (*Workflow, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read workflow %s: %w", path, err)
+	}
+	w, err := LoadStrictFromBytes(data)
+	if err != nil {
+		return nil, fmt.Errorf("workflow %s: %w", path, err)
+	}
+	return w, nil
+}
+
 // InterpolateEnv replaces ${VAR_NAME} patterns with environment variable values.
 // Checks the workflow's env map first, then os.Getenv.
 func InterpolateEnv(s string, workflowEnv map[string]string) string {
@@ -103,6 +150,7 @@ func ResolveSteps(action Action, env map[string]string) []ResolvedStep {
 			rs.Selector = step.Click.Selector
 			rs.Text = step.Click.Text
 			rs.Nth = step.Click.Nth
+			rs.Visible = step.Click.Visible
 			rs.Timeout = step.Click.Timeout
 		case step.Fill != nil:
 			rs.Type = "fill"
@@ -122,6 +170,12 @@ func ResolveSteps(action Action, env map[string]string) []ResolvedStep {
 		case step.Download != nil:
 			rs.Type = "download"
 			rs.Timeout = step.Download.Timeout
+			saveTarget := step.Download.SaveAs
+			if saveTarget == "" {
+				saveTarget = step.Download.SaveTo
+			}
+			rs.SaveTo = InterpolateEnv(saveTarget, env)
+			rs.ReturnTo = InterpolateEnv(step.Download.ReturnTo, env)
 		case step.WaitVisible != nil:
 			rs.Type = "wait_visible"
 			rs.Selector = step.WaitVisible.Selector
@@ -134,6 +188,10 @@ func ResolveSteps(action Action, env map[string]string) []ResolvedStep {
 			rs.Type = "wait_url"
 			rs.Match = step.WaitURL.Match
 			rs.Timeout = step.WaitURL.Timeout
+		case step.WaitEnabled != nil:
+			rs.Type = "wait_enabled"
+			rs.Selector = step.WaitEnabled.Selector
+			rs.Timeout = step.WaitEnabled.Timeout
 		case step.Screenshot != "":
 			rs.Type = "screenshot"
 			rs.Expr = step.Screenshot

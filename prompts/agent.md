@@ -116,19 +116,99 @@ Failure (includes `page_elements` with up to 5 similar selectors for agent conte
 
 `page_elements` is scoped recovery context, not a full DOM dump. For failed click targets on `input`, `button`, or `a` selectors, Brainstorm captures nearby compatible action controls across all three tags because sites often swap submit inputs, buttons, and styled links. For submit/button/reset inputs, use `value` as the visible label; buttons and links usually use `text`. Candidate objects may also include `type`, `name`, `placeholder`, and `role`.
 
+The same nearby-element data is also surfaced inline in the `error` string itself, so a human (or LLM) reading just the error sees actionable suggestions without parsing the JSON. Format:
+
+```
+action "login", step 2: find element "button.signin": context deadline exceeded
+  Nearby visible elements: button.btn-primary (Sign In), input[type=submit] (Submit), a.cta (Continue)
+```
+
+Up to 5 visible candidates are listed. Hidden elements are filtered out so the hint never sends you chasing the wrong fix.
+
 On failure, `screenshot_before` shows the page BEFORE the failed step ran (JPEG, ~50KB). Compare with `screenshot` (after) to understand what changed. Both are auto-captured with zero overhead on success.
 
 ### validate — check workflow syntax
 
 ```bash
-brz validate <workflow.yaml> [--json]
+brz validate [--strict] [--json] <workflow.yaml>
 ```
+
+Note: flags must come BEFORE the positional file path. Go's `flag` parser stops at the first positional argument, so `brz validate workflow.yaml --strict` would silently run leniently — always put `--strict` first.
+
+By default `validate` is lenient: unknown fields in YAML are silently dropped (yaml.v3 default). This preserves backward compat for older workflows that may have stale fields.
+
+`--strict` switches the loader to `KnownFields(true)` so any typo is rejected with a YAML line number AND a "Did you mean?" suggestion. Catches the canonical bug where `save_too: ...` (one-character typo of `save_to:`) passes basic validation, then silently fails at runtime because the field goes nowhere.
+
+```bash
+$ brz validate --strict workflow.yaml
+parse workflow workflow.yaml: yaml: unmarshal errors:
+  line 7: unknown field 'save_too' in download step. Did you mean 'save_to'? Valid fields: return_to, save_as, save_to, timeout.
+```
+
+The suggestion is computed by Levenshtein distance against the type's declared YAML tags (built once at package init via reflection). When no candidate is close enough, the suggestion is omitted but the valid-fields list is still included.
+
+Use `--strict` in CI / pre-commit; rely on the lenient default for ad-hoc one-offs.
 
 ### actions — list available actions
 
 ```bash
 brz actions <workflow.yaml> [--json]
 ```
+
+## Diagnostic Commands
+
+### examples — bundled workflow YAML patterns
+
+```bash
+brz examples list                        # show available examples + one-line summaries
+brz examples cat <name>                  # print one example to stdout
+brz examples scaffold <name> [<dir>]     # write the example file into <dir> (default: cwd)
+```
+
+The bundled examples are the canonical reference for how to write a workflow. They cover: form login, captcha-gated forms (`wait_enabled`), click-then-download (`click` + `download`), modal disambiguation (`click.visible`+`nth`), download with `save_to` + `return_to`, multi-step uploads, scraping with `eval`, and more.
+
+If you're an LLM writing a workflow, run `brz examples list` first to see what's available, then `brz examples cat <closest-match>` to crib the structure. `scaffold` writes a copy you can edit.
+
+### logs — list recent failure-screenshot artifacts
+
+```bash
+brz logs [--follow] [--limit N] [--json]
+```
+
+When a workflow step fails, brz writes two artifacts to `$TMPDIR`:
+- `<action>_failed_<timestamp>_<step>.png` — page state after failure
+- `<action>_before_<step>.jpg` — page state just before the failed step
+
+`brz logs` lists those artifacts newest-first. Use it to find the failure screenshots from your last run without `grep`'ing `/tmp` by hand.
+
+Flags:
+- `--follow` — watch `$TMPDIR` and print each new artifact as it appears (useful when running brz in another shell). NDJSON in `--json` mode.
+- `--limit N` — max entries (default 20; `0` for unlimited).
+- `--json` — array output (auto-enabled when piped).
+
+Each entry includes the parsed action name, step index, kind (failed/before), timestamp, file size, and full path. Pipe through jq to find a specific action's screenshots: `brz logs --json | jq '.[] | select(.action == "login")'`.
+
+`brz status` reports the count at a glance; `brz logs` enumerates them.
+
+### status — print a snapshot of brz's local state
+
+```bash
+brz status [--json]
+```
+
+Reports:
+- Resolved Chrome profile directory and whether a `SingletonLock` file is present (a leftover lock from a crashed launch — brz removes stale locks on next start, but seeing it here lets you debug "why won't my next run start" without launching).
+- Running brz-launched Chromium processes: PID, executable path, `--user-data-dir` argument. Detects brz ownership via exact match against the configured profile or the `brz-ephemeral-*` prefix that `--ephemeral` creates.
+- Downloads tmpdir occupancy (`<TMPDIR>/brz-downloads`): file count, total bytes, newest timestamp.
+- Failure-screenshot count from past failed actions in `<TMPDIR>` (`*_failed_*.png` and `*_before_*.jpg`).
+
+Always exits 0; status is informational. Pipe-friendly via `--json`. Useful when:
+- You're not sure if a previous brz run left a Chrome process behind
+- A workflow is hitting `SingletonLock` errors and you want to see whether the lock is held
+- You want to know how much disk brz is using under `/tmp`
+- An LLM agent driving brz needs to inspect its environment without launching anything
+
+On Windows the process scan is skipped (no `ps`); the rest of the report still works.
 
 ## Workflow YAML Format
 
@@ -152,14 +232,15 @@ actions:
 | Step | Syntax | Key fields |
 |------|--------|------------|
 | navigate | `- navigate: "https://..."` | URL string, supports `${ENV}` |
-| click | `- click: { selector, text, nth, timeout }` | `selector` required, `text` filters by visible text, `nth` is 0-indexed |
+| click | `- click: { selector, text, nth, visible, timeout }` | `selector` required. `text` filters by visible text. `nth` picks a match (`-1` = last; `1` = second match in DOM order — note historical 1-indexed-via-zero-elision behavior). `visible: true` restricts matches to visible elements (offsetParent != null + non-zero rect) — use with `nth: -1` to grab the modal-level submit when a page-level button shares the same selector. |
 | fill | `- fill: { selector, value, clear }` | `value` supports `${ENV}`, `clear: true` clears first |
 | select | `- select: { selector, value, text, timeout }` | Set dropdown value. Auto-detects native `<select>` vs Select2. `text` matches by visible option text. Retries on disabled elements within timeout. Default timeout 5s |
 | upload | `- upload: { selector, source }` | `source`: file path or `"result"` (last download) |
-| download | `- download: { timeout }` | Must follow a `click` step immediately |
+| download | `- download: { timeout, save_as, save_to, return_to }` | Must follow a `click` step immediately. `save_as` / `save_to` are aliases — write the captured download to a target path (supports `${ENV}` and leading `~`; parent dirs created). `return_to: previous` re-navigates the tab to the URL it was on before the click (use after click-triggered downloads, which leave the tab at `about:blank` and break subsequent `wait_url`). `return_to: "https://..."` navigates to a literal URL. |
 | wait_visible | `- wait_visible: { selector, timeout }` | Wait for element to appear |
 | wait_text | `- wait_text: { text, timeout }` | Wait for text on page |
 | wait_url | `- wait_url: { match, timeout }` | Wait for URL to contain substring |
+| wait_enabled | `- wait_enabled: { selector, timeout }` | Wait for element to be enabled (no `disabled` attribute, no `aria-disabled="true"`). Common pattern: forms gated by anti-bot challenges keep the submit button disabled until verification — put `wait_enabled` between `fill` and `click` so brz blocks until the element is interactable instead of clicking a disabled button (which silently no-ops). |
 | screenshot | `- screenshot: "filename.png"` | Saves to temp directory |
 | sleep | `- sleep: { duration: "5s" }` | Go duration string |
 | eval | `- eval: "js expression"` | Supports `${ENV}`, runs in page context |

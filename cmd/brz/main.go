@@ -72,6 +72,12 @@ func main() {
 		cmdValidate(os.Args[2:])
 	case "actions":
 		cmdActions(os.Args[2:])
+	case "status":
+		cmdStatus(os.Args[2:])
+	case "logs":
+		cmdLogs(os.Args[2:])
+	case "examples":
+		cmdExamples(os.Args[2:])
 	case "prompt":
 		cmdPrompt()
 	case "version":
@@ -556,16 +562,22 @@ func cmdEval(args []string) {
 func cmdValidate(args []string) {
 	fs := flag.NewFlagSet("validate", flag.ExitOnError)
 	jsonOut := fs.Bool("json", false, "Force JSON output")
+	strict := fs.Bool("strict", false, "Reject unknown YAML fields (catches typos like `save_too` for `save_to`)")
 	fs.Parse(args)
 
 	if fs.NArg() < 1 {
-		fmt.Fprintln(os.Stderr, "Usage: brz validate <workflow.yaml>")
+		fmt.Fprintln(os.Stderr, "Usage: brz validate [--strict] [--json] <workflow.yaml>")
+		fmt.Fprintln(os.Stderr, "(Go's flag parser requires flags BEFORE the positional file path.)")
 		os.Exit(exitWorkflowError)
 	}
 
 	useJSON := *jsonOut || !term.IsTerminal(int(os.Stdout.Fd()))
 
-	w, err := workflow.Load(fs.Arg(0))
+	loader := workflow.Load
+	if *strict {
+		loader = workflow.LoadStrict
+	}
+	w, err := loader(fs.Arg(0))
 	if err != nil {
 		outputError(useJSON, exitWorkflowError, err.Error())
 		return
@@ -726,6 +738,9 @@ Commands:
   eval       Execute JavaScript on a page and return the result
   validate   Parse a workflow file and report errors or summary stats
   actions    List all actions defined in a workflow with step counts
+  status     Print a diagnostic snapshot (running browsers, profile dir, etc.)
+  logs       List recent failure-screenshot artifacts in TempDir
+  examples   List, print, or scaffold bundled workflow YAML examples
   prompt     Print the LLM agent prompt (teaches an AI how to use brz)
   version    Print the brz version string
   help       Show this help text

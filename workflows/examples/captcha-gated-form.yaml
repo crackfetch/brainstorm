@@ -1,0 +1,30 @@
+# Example: Submit a form whose Sign In button is disabled until a
+# captcha verification token arrives.
+#
+# Demonstrates: wait_enabled (the gating-aware companion to click)
+
+name: captcha-gated-form
+env:
+  EMAIL: test@example.com
+  PASSWORD: secret
+actions:
+  login:
+    headed: true
+    url: https://example.com/login
+    steps:
+      - label: "Fill credentials"
+        fill: { selector: 'input[name="email"]', value: '${EMAIL}' }
+      - fill: { selector: 'input[name="password"]', value: '${PASSWORD}' }
+
+      # The submit button is initially disabled because the page is
+      # waiting on a captcha token (or 2FA prompt, or an async server
+      # check, etc.). Without wait_enabled, clicking now would silently
+      # no-op on a disabled button and the workflow would time out at a
+      # later wait_url with no diagnostic.
+      - label: "Wait for Sign In to enable (solve captcha if shown)"
+        wait_enabled:
+          selector: 'button[type="submit"]'
+          timeout: "120s"
+
+      - click: { selector: 'button[type="submit"]' }
+      - wait_url: { match: '/dashboard', timeout: "30s" }

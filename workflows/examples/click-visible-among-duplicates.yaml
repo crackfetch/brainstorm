@@ -1,0 +1,40 @@
+# Example: Click the "Save" button inside a slide-out drawer when the
+# page also has a top-level "Save" button using the same selector.
+#
+# Demonstrates: click.visible filter + click.nth disambiguation (-1 last, 0 first)
+
+name: click-visible-among-duplicates
+actions:
+  save_in_drawer:
+    url: https://example.com/admin/items/edit
+    steps:
+      - click: { selector: 'button.open-drawer' }
+      - wait_visible: { selector: '.drawer.is-open' }
+
+      # The page top-bar has <button class="save">Save</button>, AND the
+      # drawer that just opened has its own <button class="save">Save</button>.
+      # Without visible+nth, brz would error with "matched multiple elements".
+      #
+      # The drawer button comes LATER in DOM order (it was injected on
+      # open-drawer click), so nth: -1 picks it specifically.
+      - click:
+          selector: 'button.save'
+          visible: true
+          nth: -1
+
+      - wait_text: { text: 'Saved', timeout: '10s' }
+
+  cancel_in_drawer:
+    url: https://example.com/admin/items/edit
+    steps:
+      - click: { selector: 'button.open-drawer' }
+      - wait_visible: { selector: '.drawer.is-open' }
+
+      # Cancel happens to be the FIRST visible cancel button on the page
+      # (the drawer's), so nth: 0 + visible: true grabs it. This
+      # combination is also useful when the page has hidden duplicates
+      # in dropdown menus, mobile-only nav, etc.
+      - click:
+          selector: 'button.cancel'
+          visible: true
+          nth: 0

@@ -1,0 +1,44 @@
+# Example: Open an export modal, pick a category, click the modal's
+# submit, save the resulting download to a deterministic path, then
+# re-navigate the tab back to the original page so subsequent steps
+# can keep working.
+#
+# Demonstrates: click.visible+nth for modal duplicate selectors, download.save_to + return_to
+
+name: modal-export-with-save-and-return
+env:
+  CATEGORY_ID: "2"
+  CATEGORY_NAME: "yugioh"
+  OUT_DIR: "${HOME}/Downloads"
+actions:
+  export:
+    url: https://example.com/admin/pricing
+    steps:
+      # Page-level "Export Filtered CSV" button opens the modal. The
+      # MODAL ALSO contains an Export Filtered CSV submit, so the same
+      # selector matches twice.
+      - click: { selector: 'input[value="Export Filtered CSV"]' }
+      - wait_visible: { selector: 'select#CategoryId' }
+
+      # Pick the category inside the modal. select handles native
+      # <select> AND Select2 widgets automatically.
+      - select: { selector: 'select#CategoryId', value: '${CATEGORY_ID}' }
+
+      # Click the modal's submit. Two matches; visible+nth:-1 picks the
+      # last visible one (the modal-level one, since the page-level
+      # button is now hidden behind the modal overlay).
+      - click:
+          selector: 'input[value="Export Filtered CSV"]'
+          visible: true
+          nth: -1
+
+      # The click triggers a download via window.location.href, which
+      # leaves the tab at about:blank. save_to renames the captured
+      # file; return_to: previous re-navigates so subsequent steps work.
+      - download:
+          timeout: "180s"
+          save_to: "${OUT_DIR}/export_${CATEGORY_NAME}.csv"
+          return_to: previous
+
+      # Now we're back on /admin/pricing — wait_url confirms it.
+      - wait_url: { match: '/admin/pricing', timeout: "10s" }
