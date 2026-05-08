@@ -47,11 +47,18 @@ brz probe [--headless] <url>            Interactive selector REPL — type CSS/X
 ### Workflow Execution
 
 ```
-brz run <workflow.yaml> <action> [flags]   Execute a workflow action
-brz validate [--strict] <workflow.yaml>    Check YAML syntax. --strict rejects unknown fields with "Did you mean?" suggestions.
-brz fmt [--diff|--stdout] <file>...        Canonicalize workflow YAML (gofmt-style). Stable key order, comments preserved, idempotent. `--diff` for CI.
-brz lint [--strict] [--json] <file>...     Schema-check + smell-check. Superset of `validate --strict`. Flags brittle selectors, untimed downloads, JS-truthy eval, duplicate step labels, undeclared env vars.
-brz actions <workflow.yaml>                List available actions
+brz run <workflow.yaml> <action> [flags]    Execute a workflow action
+  --events=jsonl                              Emit structured JSONL lifecycle events on stdout (orchestrator-friendly)
+  --bundle-on-fail=auto|never                 Write a forensics tarball on failure (default: auto, ~/.brz/failures/)
+  --baseline <path|auto>                      On success, write a drift baseline (selector hits per step)
+  --check-drift <baseline>                    Compare this run against a baseline; warn on selector drift
+  --strict-drift                              Make any drift event a terminal failure (exit code 4)
+brz validate [--strict] <workflow.yaml>     Check YAML syntax. --strict rejects unknown fields with "Did you mean?" suggestions.
+brz fmt [--diff|--stdout] <file>...         Canonicalize workflow YAML (gofmt-style). Stable key order, comments preserved, idempotent. `--diff` for CI.
+brz lint [--strict] [--json] <file>...      Schema-check + smell-check. Superset of `validate --strict`. Flags brittle selectors, untimed downloads, JS-truthy eval, duplicate step labels, undeclared env vars.
+brz record <wf.yaml> <action> [--cassette FILE]   Run + capture every (request, response) pair into a JSON cassette
+brz replay <wf.yaml> <action> --from <cassette>   Re-run against the cassette with zero network (CI / regression check)
+brz actions <workflow.yaml>                 List available actions
 ```
 
 ### Diagnostics
@@ -155,6 +162,78 @@ printf '%s\n%s\n' \
   '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
   | brz mcp --idle-timeout 5s
 ```
+
+---
+
+## Resilience Features
+
+Long-running scrapers fail eventually. brz ships three primitives to make those failures cheap to diagnose and to make successful runs reproducible.
+
+### Failure-artifact bundles
+
+When `brz run` fails, brz writes a self-contained tarball to `~/.brz/failures/<timestamp>-<workflow>-<hash>.tar.gz`:
+
+- `failure.json` — error + chain, brz/Chrome/OS versions
+- `workflow.yaml` — verbatim copy of what ran
+- `screenshot.png` + `dom.html` — page state at the moment of failure
+- `console.log` — browser console captured during the run
+- `events.jsonl` — minimal action_end record
+- `stderr.log` — fd-level tee of this run's stderr
+- `env.txt` — allowlisted env only (`BRZ_*`, `CHROME_*`, `DISPLAY`, etc. — never full env)
+
+Bundle write errors never mask the original exit code. Best-effort per artifact: a missing screenshot doesn't abort the bundle. Defaults to `--bundle-on-fail=auto`; opt out with `never` or env `BRZ_BUNDLE_ON_FAIL=never`. Override the directory with `--bundle-dir` or `BRZ_BUNDLE_DIR`.
+
+### Site-drift detection
+
+Catch the silent failure mode where a selector "still works" but matches the wrong number of elements:
+
+```bash
+# Capture a baseline on a known-good run
+brz run wf.yaml fetch --baseline auto
+
+# Later runs check for drift
+brz run wf.yaml fetch --check-drift wf.baseline.json
+# warns to stderr: DRIFT [step=order-rows] selector .row matched 12 (was 14)
+
+# CI mode: any drift fails the run with exit 4
+brz run wf.yaml fetch --check-drift wf.baseline.json --strict-drift
+```
+
+Three signals: `selector_count_changed`, `selector_no_longer_matches`, `text_pattern_changed` (sha256 of trimmed first-match `innerText`). Default `brz run` is unchanged when these flags are absent — per-step probe overhead applies only when an observer is attached.
+
+### Record + replay
+
+Turn a one-time successful run into a reproducible test fixture. `brz record` captures every (request, response) pair via CDP `Fetch.enable`; `brz replay` serves them back from disk with no real network.
+
+```bash
+# Record a real run into a cassette
+brz record wf.yaml fetch --cassette wf.cassette.json
+
+# Replay later — zero network, fully deterministic
+brz replay wf.yaml fetch --from wf.cassette.json --strict
+```
+
+Match key is `(method, canonical-URL, sha256(body))` — host lowercased, query keys sorted. `--strict` fails on any unmatched request (CI use). Default mode passes through to network with a stderr warning. Bodies stored base64 with a 5MB cap (override with `--no-body-cap`). WebSocket frames, iframe network state, and `data:` URLs are out of scope for v1.
+
+Two big wins:
+- **CI runs scrapers without hitting real sites** — faster, no flakes, no rate limits.
+- **"Did the site change or did our workflow regress?"** Replay against yesterday's cassette: pass = site changed, fail = our regression.
+
+### Structured event stream
+
+For external orchestrators that need to react to a workflow as it runs:
+
+```bash
+brz run wf.yaml fetch --events=jsonl
+# emits one JSON object per line on stdout:
+# {"ts":"...","seq":1,"event":"workflow_start","workflow":"fetch"}
+# {"ts":"...","seq":2,"event":"step_start","step":"goto","action":"goto"}
+# {"ts":"...","seq":3,"event":"step_end","step":"goto","status":"ok","duration_ms":1240}
+# ...
+# {"ts":"...","seq":N,"event":"workflow_end","status":"ok","steps_total":12,"duration_ms":18402}
+```
+
+Stdout is pure JSONL in this mode; human output moves to stderr. Pipe through `jq` for live filtering, or stream-parse from your driver process.
 
 ---
 
