@@ -72,9 +72,10 @@ brz examples [list|cat|scaffold]           Bundled workflow YAML patterns. Run `
 ### Utility
 
 ```
-brz mcp        Run a Model Context Protocol server over stdio
-brz version    Print version
-brz help       Show full help with output schemas
+brz mcp                Run a Model Context Protocol server over stdio
+brz session capture    Headed login → dump cookies as JSON or Netscape (curl -b) — no CDP during login, sidesteps hCaptcha
+brz version            Print version
+brz help               Show full help with output schemas
 ```
 
 Run `brz <command> --help` for detailed usage, JSON schemas, and examples.
@@ -162,6 +163,32 @@ printf '%s\n%s\n' \
   '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
   | brz mcp --idle-timeout 5s
 ```
+
+---
+
+## Quiet HTTP After Login
+
+`brz session capture` shrinks brainstorm's role for many automation jobs. The pattern: open Chrome briefly for a clean human login (no CDP attached, so hCaptcha doesn't see automation), capture cookies, then drive everything else from any HTTP client. No Chrome window, no focus theft, no per-action navigation overhead.
+
+```bash
+# 1) Headed login once (Chrome opens, you sign in, cookies dumped, Chrome closes).
+brz session capture \
+  --login https://store.example.com/oauth/login \
+  --success-url store.example.com/admin \
+  --profile ~/.config/brz/chrome-profile \
+  --domain "*.example.com" \
+  --out cookies.json
+
+# 2a) Use with curl (Netscape format).
+brz session capture --login URL --success-url SUBSTR --profile DIR --format netscape > cookies.txt
+curl -b cookies.txt https://store.example.com/admin/whatever
+
+# 2b) Use from Go / Python / anything (JSON format).
+# Each cookie record: {name, value, domain, path, expires (RFC3339, omitempty
+# for session cookies), secure, httpOnly, sameSite}.
+```
+
+Sidesteps brainstorm#39 (Chrome cookie-flush race) — cookies come from Chrome's in-memory store via CDP `Network.getAllCookies`, not the on-disk SQLite. Sidesteps macOS focus theft (#40) for any workflow whose actions are really just authenticated HTTP calls.
 
 ---
 
