@@ -69,6 +69,10 @@ func main() {
 	switch cmd {
 	case "run":
 		cmdRun(os.Args[2:])
+	case "record":
+		cmdRecord(os.Args[2:])
+	case "replay":
+		cmdReplay(os.Args[2:])
 	case "inspect":
 		cmdInspect(os.Args[2:])
 	case "screenshot":
@@ -1071,6 +1075,8 @@ Usage: brz <command> [flags] [args]
 
 Commands:
   run        Execute a single workflow action and return structured results
+  record     Run a workflow action and capture network traffic to a cassette
+  replay     Run a workflow action against a previously-recorded cassette
   inspect    List interactive elements on a page (inputs, buttons, links, forms)
   screenshot Save a page screenshot and return the file path
   eval       Execute JavaScript on a page and return the result
