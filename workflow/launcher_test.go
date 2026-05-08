@@ -187,7 +187,7 @@ func TestDiscoverDebugPort(t *testing.T) {
 		if err := os.WriteFile(portFile, []byte("54321\n/devtools/browser/abc123"), 0644); err != nil {
 			t.Fatal(err)
 		}
-		port, err := discoverDebugPort(dir, time.Second, nil)
+		port, err := discoverDebugPort(dir, time.Second, nil, time.Time{})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -204,7 +204,7 @@ func TestDiscoverDebugPort(t *testing.T) {
 			time.Sleep(200 * time.Millisecond)
 			os.WriteFile(portFile, []byte("12345\n/devtools/browser/xyz"), 0644)
 		}()
-		port, err := discoverDebugPort(dir, 2*time.Second, nil)
+		port, err := discoverDebugPort(dir, 2*time.Second, nil, time.Time{})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -215,7 +215,7 @@ func TestDiscoverDebugPort(t *testing.T) {
 
 	t.Run("times out when file never appears", func(t *testing.T) {
 		dir := t.TempDir()
-		_, err := discoverDebugPort(dir, 150*time.Millisecond, nil)
+		_, err := discoverDebugPort(dir, 150*time.Millisecond, nil, time.Time{})
 		if err == nil {
 			t.Fatal("expected timeout error, got nil")
 		}
@@ -230,12 +230,62 @@ func TestDiscoverDebugPort(t *testing.T) {
 			time.Sleep(100 * time.Millisecond)
 			os.WriteFile(portFile, []byte("9876\n/devtools/browser/ok"), 0644)
 		}()
-		port, err := discoverDebugPort(dir, time.Second, nil)
+		port, err := discoverDebugPort(dir, time.Second, nil, time.Time{})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if port != "9876" {
 			t.Errorf("got port %q, want %q", port, "9876")
+		}
+	})
+
+	// Regression for #41: a previous run wrote a port file. A new launch
+	// happens; we must NOT return that stale port even though it's
+	// well-formed. Once Chrome rewrites the file (after launch), the
+	// fresh mtime > staleBefore unblocks the read.
+	t.Run("rejects stale file by mtime then accepts fresh write", func(t *testing.T) {
+		dir := t.TempDir()
+		portFile := filepath.Join(dir, "DevToolsActivePort")
+		// Stale file from a previous run (any mtime ≤ staleBefore).
+		if err := os.WriteFile(portFile, []byte("11111\n/devtools/browser/old"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		// staleBefore = wall-clock just AFTER the stale file was written.
+		// The file's mtime is now ≤ staleBefore, so it must be rejected.
+		// Sleep a hair to ensure mtime resolution treats the next write as newer.
+		time.Sleep(50 * time.Millisecond)
+		staleBefore := time.Now()
+
+		go func() {
+			time.Sleep(150 * time.Millisecond)
+			// Chrome rebinds and rewrites the file.
+			os.WriteFile(portFile, []byte("22222\n/devtools/browser/new"), 0644)
+		}()
+
+		port, err := discoverDebugPort(dir, 2*time.Second, nil, staleBefore)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if port != "22222" {
+			t.Errorf("got port %q, want %q (stale port leaked through)", port, "22222")
+		}
+	})
+
+	// When staleBefore is zero (sentinel for "no gating"), an existing
+	// well-formed file is accepted immediately — preserves backward-compat
+	// for callers that don't supply a gate.
+	t.Run("zero staleBefore disables mtime gate", func(t *testing.T) {
+		dir := t.TempDir()
+		portFile := filepath.Join(dir, "DevToolsActivePort")
+		if err := os.WriteFile(portFile, []byte("33333\n/devtools/browser/x"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		port, err := discoverDebugPort(dir, time.Second, nil, time.Time{})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if port != "33333" {
+			t.Errorf("got port %q, want %q", port, "33333")
 		}
 	})
 }

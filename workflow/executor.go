@@ -481,6 +481,19 @@ func (e *Executor) launchForLogin(l *launcher.Launcher) error {
 	absDir, _ := filepath.Abs(e.profileDir)
 	args = append(args, "--user-data-dir="+absDir)
 
+	// Stale-port-race guard (#41): delete any DevToolsActivePort left behind
+	// by a previous Chrome run against this profile dir. Chrome only writes
+	// this file *after* it binds the new --remote-debugging-port=0 port, so
+	// absence is an unambiguous "not ready yet" signal. Without this, a fast
+	// relaunch can land discoverDebugPort on the previous run's port number
+	// before Chrome rewrites the file — silent connection-refused later.
+	_ = os.Remove(filepath.Join(absDir, "DevToolsActivePort"))
+	// Belt-and-suspenders: even if the Remove above failed (rare — file
+	// open by another process, perm error), capture the wall-clock right
+	// before launch so discoverDebugPort can reject reads whose mtime
+	// hasn't advanced past it.
+	preLaunch := time.Now()
+
 	vp := DefaultViewport()
 	if e.workflow != nil && e.workflow.Viewport != nil {
 		vp = *e.workflow.Viewport
@@ -526,7 +539,7 @@ func (e *Executor) launchForLogin(l *launcher.Launcher) error {
 	if runtime.GOOS == "windows" {
 		timeout = 15 * time.Second
 	}
-	port, err := discoverDebugPort(absDir, timeout, chromeDone)
+	port, err := discoverDebugPort(absDir, timeout, chromeDone, preLaunch)
 	if err != nil {
 		// Include Chrome's stderr in the error if available.
 		stderr := strings.TrimSpace(stderrBuf.String())
@@ -553,8 +566,13 @@ func (e *Executor) launchForLogin(l *launcher.Launcher) error {
 // If chromeDone is non-nil it is checked each iteration so we can fail fast
 // when Chrome crashes during startup instead of waiting the full timeout.
 //
+// staleBefore is the wall-clock captured immediately before Chrome was
+// launched. Any DevToolsActivePort whose mtime is ≤ staleBefore is treated
+// as a leftover from a previous Chrome run (the stale-port race in #41) and
+// ignored. Pass the zero time (time.Time{}) to disable this gate.
+//
 // File format: "<port>\n<ws-path>". Only the first line (port number) is used.
-func discoverDebugPort(profileDir string, timeout time.Duration, chromeDone <-chan error) (string, error) {
+func discoverDebugPort(profileDir string, timeout time.Duration, chromeDone <-chan error, staleBefore time.Time) (string, error) {
 	portFile := filepath.Join(profileDir, "DevToolsActivePort")
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
@@ -568,6 +586,17 @@ func discoverDebugPort(profileDir string, timeout time.Duration, chromeDone <-ch
 				return "", fmt.Errorf("Chrome exited during startup with status 0 (unexpected)")
 			default:
 				// Still running — continue polling.
+			}
+		}
+
+		// Stat first so we can reject stale files (mtime ≤ staleBefore) without
+		// even reading them. Chrome rewrites the file on bind, so a fresh write
+		// has a fresh mtime.
+		if !staleBefore.IsZero() {
+			info, statErr := os.Stat(portFile)
+			if statErr != nil || !info.ModTime().After(staleBefore) {
+				time.Sleep(100 * time.Millisecond)
+				continue
 			}
 		}
 
