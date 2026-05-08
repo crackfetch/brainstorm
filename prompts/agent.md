@@ -155,6 +155,18 @@ brz actions <workflow.yaml> [--json]
 
 ## Diagnostic Commands
 
+### examples — bundled workflow YAML patterns
+
+```bash
+brz examples list                        # show available examples + one-line summaries
+brz examples cat <name>                  # print one example to stdout
+brz examples scaffold <name> [<dir>]     # write the example file into <dir> (default: cwd)
+```
+
+The bundled examples are the canonical reference for how to write a workflow. They cover: form login, captcha-gated forms (`wait_enabled`), click-then-download (`click` + `download`), modal disambiguation (`click.visible`+`nth`), download with `save_to` + `return_to`, multi-step uploads, scraping with `eval`, and more.
+
+If you're an LLM writing a workflow, run `brz examples list` first to see what's available, then `brz examples cat <closest-match>` to crib the structure. `scaffold` writes a copy you can edit.
+
 ### logs — list recent failure-screenshot artifacts
 
 ```bash
