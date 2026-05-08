@@ -1,14 +1,18 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/crackfetch/brainstorm/internal/bundle"
 	"github.com/crackfetch/brainstorm/internal/config"
 	"github.com/crackfetch/brainstorm/internal/events"
 	"github.com/crackfetch/brainstorm/prompts"
@@ -181,6 +185,8 @@ func cmdRun(args []string) {
 	fs.Var(&envs, "env", "Set workflow env var (repeatable): --env KEY=VAL")
 	dryRun := fs.Bool("dry-run", false, "Show resolved steps without executing (no browser needed)")
 	eventsFlag := fs.String("events", "", "Emit structured event stream on stdout. Values: jsonl. Forces stdout to JSONL only; final result still prints last (also as JSON).")
+	bundleMode := fs.String("bundle-on-fail", envOr("BRZ_BUNDLE_ON_FAIL", "auto"), "Write a forensics bundle on failure: auto|never")
+	bundleDir := fs.String("bundle-dir", os.Getenv("BRZ_BUNDLE_DIR"), "Override bundle output directory (default: ~/.brz/failures)")
 
 	fs.Usage = func() { printRunUsage() }
 	fs.Parse(args)
@@ -319,6 +325,21 @@ func cmdRun(args []string) {
 		})
 	}
 
+	// Start tee'ing stderr to a buffer if bundle-on-fail is active so the
+	// bundle can include stderr output from this run. Tee is done at the fd
+	// level so rod/launcher writes are captured too. Restored before Exit.
+	bundleEnabled := strings.EqualFold(*bundleMode, "auto")
+	var stderrBuf *bytes.Buffer
+	var stderrRestore func()
+	if bundleEnabled {
+		stderrBuf, stderrRestore = startStderrTee()
+		defer func() {
+			if stderrRestore != nil {
+				stderrRestore()
+			}
+		}()
+	}
+
 	if err := exec.Start(); err != nil {
 		if emitEvents {
 			// Bracket the stream so consumers see a workflow_end with the
@@ -337,6 +358,12 @@ func cmdRun(args []string) {
 		return
 	}
 	defer exec.Close()
+
+	// Attach console sink for the browser. Best-effort; may be nil.
+	var consoleSink *workflow.ConsoleSink
+	if bundleEnabled {
+		consoleSink = exec.AttachConsoleSink()
+	}
 
 	var lastResult *workflow.ActionResult
 	stepsTotal := 0
@@ -399,9 +426,150 @@ func cmdRun(args []string) {
 	}
 
 	if !lastResult.OK {
+		// Stop the console listener BEFORE bundling so sink.Lines() is stable.
+		if consoleSink != nil {
+			consoleSink.Stop()
+		}
+		// Drain + restore stderr BEFORE reading the buffer to avoid a data
+		// race with the tee goroutine. After this returns, no more writes
+		// reach the buffer and the goroutine has exited.
+		if stderrRestore != nil {
+			stderrRestore()
+			stderrRestore = nil
+		}
+		// Build forensics bundle BEFORE Close() — the page handle goes away
+		// on close and the screenshot/DOM capture needs a live browser.
+		if bundleEnabled {
+			writeFailureBundle(exec, w, workflowPath, lastResult, consoleSink, stderrBuf, *bundleDir)
+		}
 		exec.WaitOnFailure()
 		os.Exit(exitActionFailed)
 	}
+	if consoleSink != nil {
+		consoleSink.Stop()
+	}
+}
+
+// envOr returns the env var if set and non-empty, else fallback.
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
+// startStderrTee redirects os.Stderr through a pipe so writes can be both
+// forwarded to the original terminal AND captured into a buffer for the
+// failure bundle. Returns the buffer and a restore func that flushes and
+// restores the original os.Stderr. Safe to call once per process.
+func startStderrTee() (*bytes.Buffer, func()) {
+	orig := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		// Pipe creation failed — give up cleanly. Behavior unchanged.
+		return nil, func() {}
+	}
+	os.Stderr = w
+	buf := &bytes.Buffer{}
+	done := make(chan struct{})
+	go func() {
+		// Forward every write to the original stderr AND tee into buf.
+		_, _ = io.Copy(io.MultiWriter(orig, buf), r)
+		close(done)
+	}()
+	restore := func() {
+		// Closing the writer makes the goroutine drain and exit.
+		_ = w.Close()
+		<-done
+		os.Stderr = orig
+	}
+	return buf, restore
+}
+
+// writeFailureBundle assembles and writes the forensics bundle. NEVER lets
+// its own errors mask the original failure: any internal error is logged
+// to stderr and the function returns silently.
+func writeFailureBundle(
+	exec *workflow.Executor,
+	w *workflow.Workflow,
+	workflowPath string,
+	result *workflow.ActionResult,
+	sink *workflow.ConsoleSink,
+	stderrBuf *bytes.Buffer,
+	dirOverride string,
+) {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(os.Stderr, "warning: failure bundle write panicked: %v\n", r)
+		}
+	}()
+
+	// Read workflow source bytes (file copy — verbatim).
+	wfBytes, _ := os.ReadFile(workflowPath)
+
+	// Capture screenshot + DOM with a 5s context budget.
+	screenshot, dom, ssErr, domErr := exec.CaptureForensics(5 * time.Second)
+
+	// Console messages.
+	var consoleLog string
+	if sink != nil {
+		consoleLog = sink.Lines()
+	}
+
+	// Minimal events.jsonl: one entry summarizing the run. (Subset of PR #28.)
+	eventsBuf := &bytes.Buffer{}
+	enc := json.NewEncoder(eventsBuf)
+	_ = enc.Encode(map[string]any{
+		"event":  "action_end",
+		"action": result.Action,
+		"ok":     result.OK,
+		"steps":  result.Steps,
+		"failed_step": result.FailedStep,
+		"step_type":   result.StepType,
+		"error":       result.Error,
+		"ts":          time.Now().UTC().Format(time.RFC3339),
+	})
+
+	// Stderr buffer (may be nil if tee failed to set up).
+	var stderrBytes []byte
+	if stderrBuf != nil {
+		stderrBytes = append(stderrBytes, stderrBuf.Bytes()...)
+	}
+
+	in := bundle.Inputs{
+		Failure: bundle.Failure{
+			WorkflowPath:     workflowPath,
+			Action:           result.Action,
+			StepType:         result.StepType,
+			FailedStep:       result.FailedStep,
+			Target:           "", // best-effort; selector is embedded in error string
+			Error:            result.Error,
+			RetriesAttempted: 0, // not currently surfaced through ActionResult
+			BrzVersion:       Version,
+			BrowserVersion:   exec.BrowserVersionString(),
+		},
+		WorkflowSource: wfBytes,
+		Screenshot:     screenshot,
+		ScreenshotErr:  ssErr,
+		DOMHTML:        dom,
+		DOMErr:         domErr,
+		ConsoleLog:     consoleLog,
+		EventsJSONL:    eventsBuf.Bytes(),
+		StderrLog:      stderrBytes,
+		EnvAllowlist:   bundle.CaptureEnv(),
+	}
+	_ = w // workflow object reserved for richer metadata in future
+	_ = runtime.GOOS
+
+	out, err := bundle.Write(bundle.Options{
+		Dir:         dirOverride,
+		WorkflowKey: workflowPath,
+	}, in)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failure bundle write failed: %v\n", err)
+		return
+	}
+	fmt.Fprintf(os.Stderr, "failure bundle: %s\n", out)
 }
 
 // humanResultLine returns the one-line human summary used for stderr
