@@ -103,6 +103,7 @@ func ResolveSteps(action Action, env map[string]string) []ResolvedStep {
 			rs.Selector = step.Click.Selector
 			rs.Text = step.Click.Text
 			rs.Nth = step.Click.Nth
+			rs.Visible = step.Click.Visible
 			rs.Timeout = step.Click.Timeout
 		case step.Fill != nil:
 			rs.Type = "fill"
@@ -122,6 +123,12 @@ func ResolveSteps(action Action, env map[string]string) []ResolvedStep {
 		case step.Download != nil:
 			rs.Type = "download"
 			rs.Timeout = step.Download.Timeout
+			saveTarget := step.Download.SaveAs
+			if saveTarget == "" {
+				saveTarget = step.Download.SaveTo
+			}
+			rs.SaveTo = InterpolateEnv(saveTarget, env)
+			rs.ReturnTo = InterpolateEnv(step.Download.ReturnTo, env)
 		case step.WaitVisible != nil:
 			rs.Type = "wait_visible"
 			rs.Selector = step.WaitVisible.Selector
@@ -134,6 +141,10 @@ func ResolveSteps(action Action, env map[string]string) []ResolvedStep {
 			rs.Type = "wait_url"
 			rs.Match = step.WaitURL.Match
 			rs.Timeout = step.WaitURL.Timeout
+		case step.WaitEnabled != nil:
+			rs.Type = "wait_enabled"
+			rs.Selector = step.WaitEnabled.Selector
+			rs.Timeout = step.WaitEnabled.Timeout
 		case step.Screenshot != "":
 			rs.Type = "screenshot"
 			rs.Expr = step.Screenshot

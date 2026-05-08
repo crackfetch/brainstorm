@@ -83,6 +83,11 @@ type Executor struct {
 	// WaitDownload to be called BEFORE the click that triggers the download.
 	pendingDownloadWait func() *proto.PageDownloadWillBegin
 	pendingDownloadDir  string
+	// pendingDownloadURL captures the page URL right before the click that
+	// triggers a download. download.return_to=previous restores this URL once
+	// the file is captured (a click-triggered download leaves the tab at
+	// about:blank, which breaks subsequent wait_url and interaction steps).
+	pendingDownloadURL string
 
 	// loginURL is the URL to open for manual login before connecting CDP.
 	// When set, Start() launches Chrome headed with this URL but does NOT
@@ -863,15 +868,20 @@ func (e *Executor) runSteps(name string, action Action) *ActionResult {
 		}
 
 		// Look ahead: if the NEXT step is a download, register WaitDownload now
-		// (before executing the current click step).
+		// (before executing the current click step) and capture the current URL
+		// so download.return_to=previous can restore it after the download lands.
 		if i+1 < len(action.Steps) && action.Steps[i+1].Download != nil {
 			if step.Click != nil {
 				downloadDir := filepath.Join(os.TempDir(), "brz-downloads")
 				os.MkdirAll(downloadDir, 0755)
 				e.pendingDownloadWait = e.browser.WaitDownload(downloadDir)
 				e.pendingDownloadDir = downloadDir
+				if info, err := e.page.Info(); err == nil {
+					e.pendingDownloadURL = info.URL
+				}
 				if e.debug {
-					log.Printf("[%s] pre-registered WaitDownload before click", name)
+					log.Printf("[%s] pre-registered WaitDownload before click (return URL=%q)",
+						name, e.pendingDownloadURL)
 				}
 			}
 		}
@@ -950,6 +960,8 @@ func stepType(s Step) string {
 		return "wait_text"
 	case s.WaitURL != nil:
 		return "wait_url"
+	case s.WaitEnabled != nil:
+		return "wait_enabled"
 	case s.Screenshot != "":
 		return "screenshot"
 	case s.Sleep != nil:
@@ -995,6 +1007,9 @@ func (e *Executor) executeStep(step Step) error {
 	case step.WaitURL != nil:
 		return e.doWaitURL(step.WaitURL)
 
+	case step.WaitEnabled != nil:
+		return e.doWaitEnabled(step.WaitEnabled)
+
 	case step.Screenshot != "":
 		e.takeScreenshot(step.Screenshot)
 
@@ -1020,50 +1035,94 @@ func (e *Executor) doClick(c *ClickStep) error {
 	timeout := ParseTimeout(c.Timeout)
 	selector := c.Selector
 
-	var el *rod.Element
-	var err error
-
-	if c.Text != "" {
-		// Find by selector + text content, polling until timeout.
-		// Elements() returns a snapshot (doesn't wait), so we poll.
-		deadline := time.Now().Add(timeout)
-		pollInterval := 500 * time.Millisecond
-		for {
-			els, err := e.page.Elements(selector)
-			if err == nil {
-				for _, candidate := range els {
-					text, _ := candidate.Text()
-					if strings.Contains(text, c.Text) {
-						el = candidate
-						break
-					}
-				}
-			}
-			if el != nil {
-				break
-			}
-			if time.Now().After(deadline) {
-				return fmt.Errorf("no element matching %q with text %q", selector, c.Text)
-			}
-			time.Sleep(pollInterval)
-		}
-	} else if c.Nth > 0 {
-		els, err := e.page.Timeout(timeout).Elements(selector)
-		if err != nil {
-			return fmt.Errorf("find elements %q: %w", selector, err)
-		}
-		if c.Nth >= len(els) {
-			return fmt.Errorf("selector %q: nth=%d but only %d elements found", selector, c.Nth, len(els))
-		}
-		el = els[c.Nth]
-	} else {
-		el, err = e.page.Timeout(timeout).Element(selector)
+	// Fast path: no filters, no nth indexing — preserves the original
+	// single-Element() lookup for the most common click case. Behavior
+	// for existing workflows is unchanged.
+	if c.Text == "" && !c.Visible && c.Nth == 0 {
+		el, err := e.page.Timeout(timeout).Element(selector)
 		if err != nil {
 			return fmt.Errorf("find element %q: %w", selector, err)
 		}
+		return el.Click(proto.InputMouseButtonLeft, 1)
 	}
 
-	return el.Click(proto.InputMouseButtonLeft, 1)
+	// Multi-match path: poll until at least one element matches all filters
+	// (selector, then optional Visible filter, then optional Text filter),
+	// then resolve Nth (negative indices count from the end).
+	deadline := time.Now().Add(timeout)
+	pollInterval := 500 * time.Millisecond
+	var lastSeen int
+	for {
+		els, err := e.page.Elements(selector)
+		if err == nil {
+			lastSeen = len(els)
+			if c.Visible {
+				els = filterVisibleElements(els)
+			}
+			if c.Text != "" {
+				els = filterElementsByText(els, c.Text)
+			}
+			if len(els) > 0 {
+				idx := c.Nth
+				if idx < 0 {
+					idx = len(els) + idx
+				}
+				if idx < 0 || idx >= len(els) {
+					return fmt.Errorf("selector %q: nth=%d but only %d match(es) after filters (visible=%v, text=%q)",
+						selector, c.Nth, len(els), c.Visible, c.Text)
+				}
+				return els[idx].Click(proto.InputMouseButtonLeft, 1)
+			}
+		}
+		if time.Now().After(deadline) {
+			switch {
+			case c.Text != "" && c.Visible:
+				return fmt.Errorf("no visible element matching %q with text %q within %s (saw %d raw selector match(es))",
+					selector, c.Text, timeout, lastSeen)
+			case c.Text != "":
+				return fmt.Errorf("no element matching %q with text %q within %s", selector, c.Text, timeout)
+			case c.Visible:
+				return fmt.Errorf("no visible element matching %q within %s (saw %d raw selector match(es))",
+					selector, timeout, lastSeen)
+			default:
+				return fmt.Errorf("no element matching %q within %s", selector, timeout)
+			}
+		}
+		time.Sleep(pollInterval)
+	}
+}
+
+// filterVisibleElements keeps only elements that the browser would consider
+// laid out and renderable: offsetParent != null and a non-zero bounding rect.
+// This is the same heuristic typically used in interactive devtools-driven
+// inspection, so a click step's "visible: true" matches what a human looking
+// at the page would call visible.
+func filterVisibleElements(els []*rod.Element) []*rod.Element {
+	out := make([]*rod.Element, 0, len(els))
+	for _, el := range els {
+		res, err := el.Eval(`function() {
+			const r = this.getBoundingClientRect();
+			return this.offsetParent !== null && r.width > 0 && r.height > 0;
+		}`)
+		if err == nil && res.Value.Bool() {
+			out = append(out, el)
+		}
+	}
+	return out
+}
+
+// filterElementsByText returns elements whose .Text() contains the substring.
+// Mirrors the existing single-match text behavior so callers using only
+// click.text get identical filtering to before.
+func filterElementsByText(els []*rod.Element, needle string) []*rod.Element {
+	out := make([]*rod.Element, 0, len(els))
+	for _, el := range els {
+		text, err := el.Text()
+		if err == nil && strings.Contains(text, needle) {
+			out = append(out, el)
+		}
+	}
+	return out
 }
 
 func (e *Executor) doFill(f *FillStep) error {
@@ -1204,13 +1263,16 @@ func (e *Executor) doUpload(u *UploadStep) error {
 func (e *Executor) doDownload(d *DownloadStep) error {
 	var wait func() *proto.PageDownloadWillBegin
 	var downloadDir string
+	var preDownloadURL string
 
 	if e.pendingDownloadWait != nil {
 		// Use the pre-registered wait (set up before the triggering click).
 		wait = e.pendingDownloadWait
 		downloadDir = e.pendingDownloadDir
+		preDownloadURL = e.pendingDownloadURL
 		e.pendingDownloadWait = nil
 		e.pendingDownloadDir = ""
+		e.pendingDownloadURL = ""
 	} else {
 		// Fallback: register now (only works if the download was already triggered).
 		downloadDir = filepath.Join(os.TempDir(), "brz-downloads")
@@ -1229,11 +1291,92 @@ func (e *Executor) doDownload(d *DownloadStep) error {
 	downloadPath := filepath.Join(downloadDir, info.GUID)
 	e.LastDownload = downloadPath
 
-	// Read file content into LastResult
+	// Honor save_as / save_to: rename the captured file to the requested
+	// path. SaveAs takes precedence over SaveTo when both are set so older
+	// workflows that use save_as keep working unchanged.
+	saveTarget := d.SaveAs
+	if saveTarget == "" {
+		saveTarget = d.SaveTo
+	}
+	if saveTarget != "" {
+		expanded := InterpolateEnv(saveTarget, e.workflow.Env)
+		expanded, err := expandHomeDir(expanded)
+		if err == nil && expanded != "" {
+			if mkErr := os.MkdirAll(filepath.Dir(expanded), 0o755); mkErr == nil {
+				if rerr := moveFile(downloadPath, expanded); rerr == nil {
+					e.LastDownload = expanded
+					downloadPath = expanded
+				} else if e.debug {
+					log.Printf("download save: rename %q → %q failed: %v", downloadPath, expanded, rerr)
+				}
+			}
+		}
+	}
+
+	// Read file content into LastResult (preserve existing behavior)
 	if data, err := os.ReadFile(downloadPath); err == nil {
 		e.LastResult = string(data)
 	}
 
+	// return_to: re-navigate the tab once the download is captured. A
+	// click-triggered download often leaves the page at about:blank — without
+	// this, subsequent wait_url / interaction steps fail.
+	if d.ReturnTo != "" {
+		var returnURL string
+		if d.ReturnTo == "previous" {
+			returnURL = preDownloadURL
+		} else {
+			returnURL = InterpolateEnv(d.ReturnTo, e.workflow.Env)
+		}
+		if returnURL != "" && returnURL != "about:blank" {
+			if err := e.page.Navigate(returnURL); err == nil {
+				_ = e.page.WaitLoad()
+			} else if e.debug {
+				log.Printf("download return_to %q failed: %v", returnURL, err)
+			}
+		}
+	}
+
+	return nil
+}
+
+// expandHomeDir resolves a leading "~" in a path. Returns the input unchanged
+// if no expansion is needed. Used so save_as / save_to can take "~/Downloads/x.csv"
+// without forcing every workflow author to expand home themselves.
+func expandHomeDir(path string) (string, error) {
+	if path == "" || path[0] != '~' {
+		return path, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return path, err
+	}
+	if path == "~" {
+		return home, nil
+	}
+	if len(path) > 1 && path[1] == '/' {
+		return filepath.Join(home, path[2:]), nil
+	}
+	// "~user/..." form is not supported; return as-is so callers see a clear
+	// missing-file error downstream rather than a silently-wrong path.
+	return path, nil
+}
+
+// moveFile renames src to dst, falling back to copy+remove when rename fails
+// (typically because the source and destination are on different filesystems
+// — e.g. /tmp on a tmpfs and ~/Downloads on the user's primary disk).
+func moveFile(src, dst string) error {
+	if err := os.Rename(src, dst); err == nil {
+		return nil
+	}
+	data, rerr := os.ReadFile(src)
+	if rerr != nil {
+		return rerr
+	}
+	if werr := os.WriteFile(dst, data, 0o644); werr != nil {
+		return werr
+	}
+	_ = os.Remove(src)
 	return nil
 }
 
@@ -1262,6 +1405,42 @@ func (e *Executor) doWaitURL(w *WaitURLStep) error {
 	}
 
 	return fmt.Errorf("URL did not match %q within %s", w.Match, timeout)
+}
+
+// doWaitEnabled blocks until the target element is present in the DOM AND
+// considered enabled: no `disabled` property and no `aria-disabled="true"`.
+//
+// Motivating case: forms protected by anti-bot challenges keep their submit
+// button disabled until a verification token is received. Workflows that
+// previously did fill → click submit silently no-op'd because the click
+// landed on a disabled button. With wait_enabled between fill and click,
+// brz blocks until the element actually becomes interactable.
+func (e *Executor) doWaitEnabled(w *WaitStep) error {
+	timeout := ParseTimeout(w.Timeout)
+	deadline := time.Now().Add(timeout)
+	pollInterval := 500 * time.Millisecond
+
+	for {
+		// Re-look-up the element each poll. Page.Has is non-blocking so
+		// we don't accidentally wait forever when the selector never matches
+		// (e.g. user typo) — that case lands in the deadline check below.
+		has, hasEl, _ := e.page.Has(w.Selector)
+		if has && hasEl != nil {
+			res, evalErr := hasEl.Eval(`function() {
+				if (this.disabled === true) return false;
+				const aria = this.getAttribute('aria-disabled');
+				if (aria === 'true') return false;
+				return true;
+			}`)
+			if evalErr == nil && res.Value.Bool() {
+				return nil
+			}
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("element %q did not become enabled within %s", w.Selector, timeout)
+		}
+		time.Sleep(pollInterval)
+	}
 }
 
 // setViewport configures the page viewport via CDP. The viewport parameter

@@ -81,6 +81,12 @@ type Step struct {
 	WaitVisible *WaitStep    `yaml:"wait_visible,omitempty"`
 	WaitText    *WaitStep    `yaml:"wait_text,omitempty"`
 	WaitURL     *WaitURLStep `yaml:"wait_url,omitempty"`
+	// WaitEnabled blocks until an element is enabled (no `disabled` attribute,
+	// no `aria-disabled="true"`). Common pattern: forms gated by anti-bot
+	// challenges keep the submit button disabled until verified. Pair with
+	// click so brz blocks until the element is ready instead of clicking a
+	// disabled button (which silently no-ops in most browsers).
+	WaitEnabled *WaitStep `yaml:"wait_enabled,omitempty"`
 
 	// Utilities
 	Screenshot string     `yaml:"screenshot,omitempty"`
@@ -95,8 +101,19 @@ type Step struct {
 type ClickStep struct {
 	Selector string `yaml:"selector"`
 	Text     string `yaml:"text,omitempty"` // match by visible text
-	Nth      int    `yaml:"nth,omitempty"`  // 0-indexed, use when multiple matches
-	Timeout  string `yaml:"timeout,omitempty"`
+	// Nth picks among multiple matches.
+	//
+	// Behavior preserved for backward compatibility:
+	//   nth: 0   → no nth applied (single-element lookup, picks first match)
+	//   nth: 1+  → els[N] (because zero is the Go empty value, this is effectively
+	//              "1-indexed via zero-elision" — nth: 1 is the second match in DOM order)
+	//   nth: -1  → last match (negative indices count from end: -1 = last, -2 = second-to-last)
+	//
+	// Use Visible: true to filter to visible elements before applying Nth — common
+	// pattern when a page-level button and a modal-level submit share a selector.
+	Nth     int    `yaml:"nth,omitempty"`
+	Visible bool   `yaml:"visible,omitempty"` // restrict matches to visible elements (offsetParent != null + non-zero rect)
+	Timeout string `yaml:"timeout,omitempty"`
 }
 
 type FillStep struct {
@@ -118,8 +135,19 @@ type UploadStep struct {
 }
 
 type DownloadStep struct {
-	Timeout  string `yaml:"timeout,omitempty"`
-	SaveAs   string `yaml:"save_as,omitempty"` // optional filename pattern
+	Timeout string `yaml:"timeout,omitempty"`
+	// SaveAs / SaveTo are aliases — both write the captured download to a target
+	// path. Supports ${ENV} interpolation and a leading "~" for the home dir.
+	// Parent directories are created as needed. If neither is set, the download
+	// stays in the temp dir and the path is exposed as LastDownload.
+	SaveAs string `yaml:"save_as,omitempty"`
+	SaveTo string `yaml:"save_to,omitempty"`
+	// ReturnTo navigates the tab back after the download is captured. A
+	// click-triggered download leaves the page at about:blank, which breaks
+	// subsequent wait_url / interaction steps. Set to "previous" to restore
+	// the URL the tab was on right before the click that triggered the
+	// download, or to a literal URL.
+	ReturnTo string `yaml:"return_to,omitempty"`
 }
 
 type WaitStep struct {
@@ -152,6 +180,9 @@ type ResolvedStep struct {
 	Duration string `json:"duration,omitempty"`
 	Clear    bool   `json:"clear,omitempty"`
 	Nth      int    `json:"nth,omitempty"`
+	Visible  bool   `json:"visible,omitempty"`
+	SaveTo   string `json:"save_to,omitempty"`
+	ReturnTo string `json:"return_to,omitempty"`
 	Label    string `json:"label,omitempty"`
 	Optional bool   `json:"optional,omitempty"`
 	Expr     string `json:"expr,omitempty"`

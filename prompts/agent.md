@@ -152,14 +152,15 @@ actions:
 | Step | Syntax | Key fields |
 |------|--------|------------|
 | navigate | `- navigate: "https://..."` | URL string, supports `${ENV}` |
-| click | `- click: { selector, text, nth, timeout }` | `selector` required, `text` filters by visible text, `nth` is 0-indexed |
+| click | `- click: { selector, text, nth, visible, timeout }` | `selector` required. `text` filters by visible text. `nth` picks a match (`-1` = last; `1` = second match in DOM order — note historical 1-indexed-via-zero-elision behavior). `visible: true` restricts matches to visible elements (offsetParent != null + non-zero rect) — use with `nth: -1` to grab the modal-level submit when a page-level button shares the same selector. |
 | fill | `- fill: { selector, value, clear }` | `value` supports `${ENV}`, `clear: true` clears first |
 | select | `- select: { selector, value, text, timeout }` | Set dropdown value. Auto-detects native `<select>` vs Select2. `text` matches by visible option text. Retries on disabled elements within timeout. Default timeout 5s |
 | upload | `- upload: { selector, source }` | `source`: file path or `"result"` (last download) |
-| download | `- download: { timeout }` | Must follow a `click` step immediately |
+| download | `- download: { timeout, save_as, save_to, return_to }` | Must follow a `click` step immediately. `save_as` / `save_to` are aliases — write the captured download to a target path (supports `${ENV}` and leading `~`; parent dirs created). `return_to: previous` re-navigates the tab to the URL it was on before the click (use after click-triggered downloads, which leave the tab at `about:blank` and break subsequent `wait_url`). `return_to: "https://..."` navigates to a literal URL. |
 | wait_visible | `- wait_visible: { selector, timeout }` | Wait for element to appear |
 | wait_text | `- wait_text: { text, timeout }` | Wait for text on page |
 | wait_url | `- wait_url: { match, timeout }` | Wait for URL to contain substring |
+| wait_enabled | `- wait_enabled: { selector, timeout }` | Wait for element to be enabled (no `disabled` attribute, no `aria-disabled="true"`). Common pattern: forms gated by anti-bot challenges keep the submit button disabled until verification — put `wait_enabled` between `fill` and `click` so brz blocks until the element is interactable instead of clicking a disabled button (which silently no-ops). |
 | screenshot | `- screenshot: "filename.png"` | Saves to temp directory |
 | sleep | `- sleep: { duration: "5s" }` | Go duration string |
 | eval | `- eval: "js expression"` | Supports `${ENV}`, runs in page context |
