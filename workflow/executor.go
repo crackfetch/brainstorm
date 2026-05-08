@@ -983,6 +983,14 @@ func (e *Executor) runSteps(name string, action Action) *ActionResult {
 				similarSelector := SimilarElementsSelectorForStepSelector(selector)
 				if elements := e.captureSimilarElements(similarSelector); len(elements) > 0 {
 					result.PageElements = elements
+					// Surface the candidates in the error string itself so a
+					// human (or LLM) reading just the error sees actionable
+					// suggestions without having to inspect the JSON body.
+					// The full list stays on result.PageElements for any
+					// programmatic consumer.
+					if hint := summarizeNearbyElements(elements, 5); hint != "" {
+						result.Error += "\n  " + hint
+					}
 				}
 			}
 

@@ -116,6 +116,15 @@ Failure (includes `page_elements` with up to 5 similar selectors for agent conte
 
 `page_elements` is scoped recovery context, not a full DOM dump. For failed click targets on `input`, `button`, or `a` selectors, Brainstorm captures nearby compatible action controls across all three tags because sites often swap submit inputs, buttons, and styled links. For submit/button/reset inputs, use `value` as the visible label; buttons and links usually use `text`. Candidate objects may also include `type`, `name`, `placeholder`, and `role`.
 
+The same nearby-element data is also surfaced inline in the `error` string itself, so a human (or LLM) reading just the error sees actionable suggestions without parsing the JSON. Format:
+
+```
+action "login", step 2: find element "button.signin": context deadline exceeded
+  Nearby visible elements: button.btn-primary (Sign In), input[type=submit] (Submit), a.cta (Continue)
+```
+
+Up to 5 visible candidates are listed. Hidden elements are filtered out so the hint never sends you chasing the wrong fix.
+
 On failure, `screenshot_before` shows the page BEFORE the failed step ran (JPEG, ~50KB). Compare with `screenshot` (after) to understand what changed. Both are auto-captured with zero overhead on success.
 
 ### validate — check workflow syntax
