@@ -71,6 +71,10 @@ func main() {
 		cmdEval(os.Args[2:])
 	case "validate":
 		cmdValidate(os.Args[2:])
+	case "fmt":
+		cmdFmt(os.Args[2:])
+	case "lint":
+		cmdLint(os.Args[2:])
 	case "actions":
 		cmdActions(os.Args[2:])
 	case "status":
@@ -831,6 +835,8 @@ Commands:
   screenshot Save a page screenshot and return the file path
   eval       Execute JavaScript on a page and return the result
   validate   Parse a workflow file and report errors or summary stats
+  fmt        Canonicalize workflow YAML formatting (gofmt for workflows)
+  lint       Schema-check + smell-check workflow YAML (superset of validate)
   actions    List all actions defined in a workflow with step counts
   status     Print a diagnostic snapshot (running browsers, profile dir, etc.)
   logs       List recent failure-screenshot artifacts in TempDir

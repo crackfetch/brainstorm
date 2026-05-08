@@ -48,6 +48,8 @@ brz eval <url> <js-expression>          Execute JavaScript and return the result
 ```
 brz run <workflow.yaml> <action> [flags]   Execute a workflow action
 brz validate [--strict] <workflow.yaml>    Check YAML syntax. --strict rejects unknown fields with "Did you mean?" suggestions.
+brz fmt [--diff|--stdout] <file>...        Canonicalize workflow YAML (gofmt-style). Stable key order, comments preserved, idempotent. `--diff` for CI.
+brz lint [--strict] [--json] <file>...     Schema-check + smell-check. Superset of `validate --strict`. Flags brittle selectors, untimed downloads, JS-truthy eval, duplicate step labels, undeclared env vars.
 brz actions <workflow.yaml>                List available actions
 ```
 
