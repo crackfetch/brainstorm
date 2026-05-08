@@ -47,8 +47,16 @@ brz eval <url> <js-expression>          Execute JavaScript and return the result
 
 ```
 brz run <workflow.yaml> <action> [flags]   Execute a workflow action
-brz validate <workflow.yaml>               Check YAML syntax
+brz validate [--strict] <workflow.yaml>    Check YAML syntax. --strict rejects unknown fields with "Did you mean?" suggestions.
 brz actions <workflow.yaml>                List available actions
+```
+
+### Diagnostics
+
+```
+brz status [--json]                        Snapshot of brz state: profile dir, SingletonLock files, running Chromiums, downloads tmpdir, failure-artifact counts.
+brz logs [--follow] [--limit N] [--json]   List recent failure-screenshot artifacts newest-first. --follow tails new ones as they appear (NDJSON).
+brz examples [list|cat|scaffold]           Bundled workflow YAML patterns. Run `brz examples list` to see what's available; `cat <name>` prints one; `scaffold <name>` writes it into the cwd.
 ```
 
 ### Utility
