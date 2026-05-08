@@ -2204,3 +2204,129 @@ func (e *Executor) SetEnv(key, value string) {
 	}
 	e.workflow.Env[key] = value
 }
+
+// BrowserVersionString returns the running browser's product string
+// (e.g. "Chrome/131.0.6778.86"). Best-effort: empty on any failure.
+// Used by the failure-bundle writer.
+func (e *Executor) BrowserVersionString() string {
+	e.mu.Lock()
+	browser := e.browser
+	e.mu.Unlock()
+	if browser == nil {
+		return ""
+	}
+	ver, err := (proto.BrowserGetVersion{}).Call(browser)
+	if err != nil {
+		return ""
+	}
+	return ver.Product
+}
+
+// CaptureForensics grabs a screenshot + DOM HTML for the failure bundle.
+// Time-bounded so a hung page can't block exit. Each artifact is independent;
+// a screenshot failure does not prevent DOM capture (and vice versa).
+// Caller must invoke this BEFORE Close() — page handle goes away on close.
+//
+// NOTE: screenshot and DOM are captured sequentially; on highly dynamic
+// pages they may describe slightly different render states. Acceptable for
+// post-mortem forensics; not suitable as a synchronized snapshot.
+func (e *Executor) CaptureForensics(timeout time.Duration) (screenshot []byte, dom string, ssErr, domErr error) {
+	e.mu.Lock()
+	page := e.page
+	e.mu.Unlock()
+	if page == nil {
+		ssErr = fmt.Errorf("no page available")
+		domErr = ssErr
+		return
+	}
+	if timeout <= 0 {
+		timeout = 5 * time.Second
+	}
+	// Screenshot: non-Must variant, time-bounded.
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				ssErr = fmt.Errorf("screenshot panic: %v", r)
+			}
+		}()
+		data, err := page.Timeout(timeout).Screenshot(true, nil)
+		if err != nil {
+			ssErr = err
+			return
+		}
+		screenshot = data
+	}()
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				domErr = fmt.Errorf("dom panic: %v", r)
+			}
+		}()
+		html, err := page.Timeout(timeout).HTML()
+		if err != nil {
+			domErr = err
+			return
+		}
+		dom = html
+	}()
+	return
+}
+
+// ConsoleSink collects browser console messages. Safe for concurrent use.
+type ConsoleSink struct {
+	mu    sync.Mutex
+	lines []string
+	stop  func()
+}
+
+// Lines returns the captured console messages, joined with newlines.
+func (c *ConsoleSink) Lines() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return strings.Join(c.lines, "\n")
+}
+
+// Stop ends the listener. Safe to call multiple times.
+func (c *ConsoleSink) Stop() {
+	c.mu.Lock()
+	stop := c.stop
+	c.stop = nil
+	c.mu.Unlock()
+	if stop != nil {
+		stop()
+	}
+}
+
+// AttachConsoleSink starts a browser-level listener that records every
+// Runtime.consoleAPICalled event into a sink. Returns nil if no browser
+// is running. The listener stops when sink.Stop() is called or when the
+// browser closes (whichever comes first).
+func (e *Executor) AttachConsoleSink() *ConsoleSink {
+	e.mu.Lock()
+	browser := e.browser
+	e.mu.Unlock()
+	if browser == nil {
+		return nil
+	}
+	sink := &ConsoleSink{}
+	cancelCtx, cancel := browser.WithCancel()
+	wait := cancelCtx.EachEvent(func(ev *proto.RuntimeConsoleAPICalled) {
+		var parts []string
+		for _, a := range ev.Args {
+			parts = append(parts, fmt.Sprintf("%v", a.Value))
+		}
+		line := fmt.Sprintf("[%s] %s", ev.Type, strings.Join(parts, " "))
+		sink.mu.Lock()
+		// Cap at 5000 lines to bound memory.
+		if len(sink.lines) < 5000 {
+			sink.lines = append(sink.lines, line)
+		}
+		sink.mu.Unlock()
+	})
+	sink.stop = cancel
+	go func() {
+		// wait() blocks until cancel() or browser shuts down.
+		wait()
+	}()
+	return sink
+}

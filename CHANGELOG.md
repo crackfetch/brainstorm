@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Failure-artifact bundles. When `brz run` fails it now writes a self-contained forensics bundle to `~/.brz/failures/<timestamp>-<workflow>-<hash>/` (plus a sibling `.tar.gz`). Contents: `failure.json` (always present), `workflow.yaml` (file copy, verbatim), `screenshot.png`, `dom.html`, `console.log` (browser console), `events.jsonl` (minimal action_end record), `stderr.log` (this run's stderr, fd-level tee), `env.txt` (allowlisted only — `BRZ_*`, `CHROME_*`, `DISPLAY`, `WAYLAND_DISPLAY`, `OS`, plus `PATH_FIRST`). Each best-effort artifact gets a `<name>.error` sidecar on capture failure; only `failure.json` is mandatory. Bundle write errors NEVER mask the original exit code — failures during write log a one-line warning to stderr and exit with the original `exitActionFailed` code. New flags: `--bundle-on-fail=auto|never` (default `auto`), `--bundle-dir <path>`. Env overrides: `BRZ_BUNDLE_ON_FAIL`, `BRZ_BUNDLE_DIR`. Secret-leak threat model: env capture is allowlist-only (e.g. `AWS_SECRET_ACCESS_KEY`, `GITHUB_TOKEN` are excluded); however, `workflow.yaml` is copied verbatim, so any secrets templated into the workflow file by `--env` substitution before run-time will appear in the bundle — the user owns that risk.
+
 ## [0.14.0] - 2026-05-08
 
 Theme: **agent + workflow foundations.** brz becomes drivable by LLM agents (MCP), gains a structured event stream so external orchestrators can react in-flight, and ships ergonomic dev surfaces for selector iteration, formatting, and reuse.
