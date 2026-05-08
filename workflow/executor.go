@@ -101,6 +101,19 @@ type Executor struct {
 	// debugPort is the actual port Chrome bound to when launched with
 	// --remote-debugging-port=0. Set by launchForLogin() after Chrome starts.
 	debugPort string
+
+	// announceWriter receives status lines (currently just the headed-launch
+	// announcement). Nil falls back to os.Stderr. Set only by tests via
+	// setAnnounceWriterForTest in export_test.go — not part of the public API,
+	// so callers can't install a writer that blocks while e.mu is held.
+	announceWriter io.Writer
+
+	// pendingAnnounce* hold launch info captured under e.mu in startLocked /
+	// launchForLogin. Start() flushes them after releasing the lock so the
+	// I/O does not stall any concurrent executor method that contends on e.mu.
+	pendingAnnouncePID  int
+	pendingAnnounceExe  string
+	pendingAnnounceFlag bool
 }
 
 // NewExecutor creates an executor with browser configuration.
@@ -309,10 +322,22 @@ func (e *Executor) buildLauncher() *launcher.Launcher {
 }
 
 // Start launches the browser with stealth settings.
+//
+// The headed-launch announcement (a single stderr line with PID + exe path)
+// is emitted AFTER releasing e.mu so the writer call cannot block other
+// executor methods. The pending data is captured under the lock; only the
+// I/O happens unlocked.
 func (e *Executor) Start() error {
 	e.mu.Lock()
-	defer e.mu.Unlock()
-	return e.startLocked()
+	err := e.startLocked()
+	pid, exe, announce := e.pendingAnnouncePID, e.pendingAnnounceExe, e.pendingAnnounceFlag
+	e.pendingAnnouncePID, e.pendingAnnounceExe, e.pendingAnnounceFlag = 0, "", false
+	e.mu.Unlock()
+
+	if announce {
+		e.announceHeadedLaunch(pid, exe)
+	}
+	return err
 }
 
 func (e *Executor) startLocked() error {
@@ -333,11 +358,22 @@ func (e *Executor) startLocked() error {
 	if err != nil && e.profileDir != "" && strings.Contains(err.Error(), "SingletonLock") {
 		if e.removeStaleSingletonLock() {
 			// Stale lock removed — retry once with a fresh launcher.
-			controlURL, err = e.buildLauncher().Launch()
+			l = e.buildLauncher()
+			controlURL, err = l.Launch()
 		}
 	}
 	if err != nil {
 		return fmt.Errorf("launch browser: %w", err)
+	}
+
+	// Capture launch info for the post-unlock announcement. Surface the
+	// launch on stderr so a user/LLM driving brz knows the window exists —
+	// macOS in particular tends to open new Chromium instances behind
+	// whatever app currently owns the foreground.
+	if e.headed {
+		e.pendingAnnouncePID = l.PID()
+		e.pendingAnnounceExe = l.Get("rod-bin")
+		e.pendingAnnounceFlag = true
 	}
 
 	// Delayed connection: store the control URL and return without
@@ -419,6 +455,12 @@ func (e *Executor) launchForLogin(l *launcher.Launcher) error {
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("launch Chrome for login: %w", err)
 	}
+
+	// launchForLogin always opens a visible window — capture launch info
+	// for the post-unlock announcement (Start releases e.mu before flushing).
+	e.pendingAnnouncePID = cmd.Process.Pid
+	e.pendingAnnounceExe = bin
+	e.pendingAnnounceFlag = true
 
 	// Monitor Chrome process in a goroutine so we can detect early crashes.
 	chromeDone := make(chan error, 1)
@@ -801,6 +843,15 @@ func (e *Executor) RunAction(name string) *ActionResult {
 				failResult.Error += fmt.Sprintf("; headed escalation failed: %v", err)
 				failResult.DurationMs = time.Since(start).Milliseconds()
 				return failResult
+			}
+			// Surface the headed-launch announcement that restart's startLocked
+			// stashed. We hold e.mu here; the announce writes to os.Stderr by
+			// default (non-blocking). Tests inject only synchronous in-memory
+			// buffers, never anything that could deadlock under the lock.
+			if e.pendingAnnounceFlag {
+				pid, exe := e.pendingAnnouncePID, e.pendingAnnounceExe
+				e.pendingAnnouncePID, e.pendingAnnounceExe, e.pendingAnnounceFlag = 0, "", false
+				e.announceHeadedLaunch(pid, exe)
 			}
 			// e.page is nil after restart — setupPage will create a fresh tab.
 			if errMsg := e.setupPage(action); errMsg != "" {
@@ -1451,6 +1502,40 @@ func (e *Executor) setViewport(vp Viewport) {
 		Height:            vp.Height,
 		DeviceScaleFactor: 1,
 	}.Call(e.page)
+}
+
+// announceHeadedLaunch writes a single stderr line whenever brz launches a
+// visible Chromium. Without this line, headed mode is invisible to users on
+// macOS — the window often opens behind whatever app currently has focus,
+// and there's no signal that the browser is actually open. The line names
+// the PID, exe path, and profile dir so a user (or LLM driving brz) can
+// reliably surface the window or kill it.
+//
+// Callers must NOT hold e.mu while invoking this (production callers don't —
+// see Start). The writer is os.Stderr by default; tests can override via
+// setAnnounceWriterForTest. We do not expose a public override because a
+// blocking user-supplied writer would stall every executor method, and the
+// announce path is a UX nicety, not load-bearing logic.
+func (e *Executor) announceHeadedLaunch(pid int, exePath string) {
+	var w io.Writer = os.Stderr
+	if e.announceWriter != nil {
+		w = e.announceWriter
+	}
+	profile := e.profileDir
+	if profile == "" {
+		profile = "(default)"
+	}
+	exe := exePath
+	if exe == "" {
+		exe = "(unknown)"
+	}
+	if pid > 0 {
+		fmt.Fprintf(w, "[brz] Headed Chromium launched (pid=%d exe=%s profile=%s) — Cmd+Tab to focus if not visible\n",
+			pid, exe, profile)
+	} else {
+		fmt.Fprintf(w, "[brz] Headed Chromium launched (exe=%s profile=%s) — Cmd+Tab to focus if not visible\n",
+			exe, profile)
+	}
 }
 
 func (e *Executor) injectStealth() {

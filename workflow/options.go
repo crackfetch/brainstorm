@@ -36,3 +36,4 @@ func WithLoginURL(loginURL, successURL string) Option {
 		e.loginSuccessURL = successURL
 	}
 }
+
