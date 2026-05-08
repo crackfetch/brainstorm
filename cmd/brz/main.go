@@ -85,6 +85,8 @@ func main() {
 		cmdExamples(os.Args[2:])
 	case "probe":
 		cmdProbe(os.Args[2:])
+	case "mcp":
+		cmdMCP(os.Args[2:])
 	case "prompt":
 		cmdPrompt()
 	case "version":
@@ -844,6 +846,7 @@ Commands:
   logs       List recent failure-screenshot artifacts in TempDir
   examples   List, print, or scaffold bundled workflow YAML examples
   probe      Interactive selector REPL — type selectors, see live matches
+  mcp        Run a Model Context Protocol server over stdio (LLM tool calls)
   prompt     Print the LLM agent prompt (teaches an AI how to use brz)
   version    Print the brz version string
   help       Show this help text
