@@ -4,9 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-05-08
+
+Theme: **resilience.** Long-lived scrapers get the diagnostic and determinism primitives they need to survive site change: forensic bundles on failure, deterministic replay against recorded network traffic, and explicit drift detection between runs.
+
 ### Added
 - Failure-artifact bundles. When `brz run` fails it now writes a self-contained forensics bundle to `~/.brz/failures/<timestamp>-<workflow>-<hash>/` (plus a sibling `.tar.gz`). Contents: `failure.json` (always present), `workflow.yaml` (file copy, verbatim), `screenshot.png`, `dom.html`, `console.log` (browser console), `events.jsonl` (minimal action_end record), `stderr.log` (this run's stderr, fd-level tee), `env.txt` (allowlisted only — `BRZ_*`, `CHROME_*`, `DISPLAY`, `WAYLAND_DISPLAY`, `OS`, plus `PATH_FIRST`). Each best-effort artifact gets a `<name>.error` sidecar on capture failure; only `failure.json` is mandatory. Bundle write errors NEVER mask the original exit code — failures during write log a one-line warning to stderr and exit with the original `exitActionFailed` code. New flags: `--bundle-on-fail=auto|never` (default `auto`), `--bundle-dir <path>`. Env overrides: `BRZ_BUNDLE_ON_FAIL`, `BRZ_BUNDLE_DIR`. Secret-leak threat model: env capture is allowlist-only (e.g. `AWS_SECRET_ACCESS_KEY`, `GITHUB_TOKEN` are excluded); however, `workflow.yaml` is copied verbatim, so any secrets templated into the workflow file by `--env` substitution before run-time will appear in the bundle — the user owns that risk.
 - Site-drift detection. `brz run --baseline <path|auto>` writes a JSON snapshot of selector hits per step on a successful run; `--check-drift <baseline-path>` compares the current run against it as steps execute. Three drift signals: `selector_count_changed`, `selector_no_longer_matches`, `text_pattern_changed` (sha256 of the trimmed/lowercased first-match `innerText`). Drift events print to stderr. `--strict-drift` makes any drift event a terminal failure (exit 4). Default `brz run` behavior is unchanged when neither flag is set; per-step probe overhead only applies when an observer is attached. Baseline files tolerate unknown fields so newer baselines remain readable by older brz binaries.
+- `brz record <workflow.yaml> <action> [--cassette FILE] [--mode all|new] [--no-body-cap]` runs a workflow with a CDP `Fetch.enable` interceptor and writes every captured (request, response) pair to a versioned JSON cassette. Default cassette path is `<workflow-basename>.cassette.json` next to the workflow. Bodies are stored base64; responses larger than 5MB are truncated with a stderr warning unless `--no-body-cap` is set.
+- `brz replay <workflow.yaml> <action> --from <cassette> [--strict]` runs a workflow with the same interceptor in serve-mode: matched requests return the recorded response from disk and never touch the real network. Match key is `(method, canonical-URL, sha256(body))` — host is lowercased and query keys are sorted so cosmetic URL differences don't cause misses. `--strict` fails the run on any unmatched request (intended for CI); the default mode passes through to the network with a stderr warning. WebSocket frames, iframe network state, and `data:` URLs are out of scope for v1.
+- New `internal/cassette` package owns the on-disk cassette format and the `Recorder` / `Replayer` lifecycle wrappers around `rod.Browser.HijackRequests()`. Forward-compat: readers reject cassettes whose `version` exceeds the local `FormatVersion`.
+- New exit code: `4` for `--strict-drift` failures (distinct from `exitActionFailed`).
+
+### Compatibility
+- All additions are backwards compatible. Default behavior of `brz run` with no new flags is byte-identical. No YAML schema fields removed or renamed. No CLI flags removed. The new exit code `4` only fires when `--strict-drift` is explicitly set.
 
 ## [0.14.0] - 2026-05-08
 
