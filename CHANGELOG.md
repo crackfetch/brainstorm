@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- `launchForLogin` now deletes any leftover `<profileDir>/DevToolsActivePort` from a previous Chrome run before spawning the new Chrome process, and `discoverDebugPort` rejects the file by `mtime` until Chrome rewrites it. Closes #41 — without this, a fast relaunch (integration test tearing Chrome down then immediately retrying, or any caller that runs brz back-to-back against the same profile) would land on the previous run's port number and silently fail with `connection refused` later. The mtime gate is belt-and-suspenders in case the pre-launch `os.Remove` ever fails (rare: file open by another process, permission error). Backwards compatible at the test surface: `discoverDebugPort` accepts `time.Time{}` as a sentinel meaning "no gating."
+
 ### Added
 - `brz session capture` — first-class "headed login → quiet HTTP" primitive. Opens Chrome with the existing `WithLoginURL` flow (no CDP attached during the user's typing, so hCaptcha and similar bot detectors don't see automation), waits for the success URL, attaches CDP, dumps `Network.getAllCookies` via rod, and writes a portable cookie bundle. Two output formats: versioned JSON (default) and Netscape `cookies.txt` for `curl -b`. Optional `--domain "*.example.com,other.com"` filter. Sidesteps brainstorm#39 entirely — cookies come from Chrome's in-memory store via CDP, not the on-disk SQLite, so the cookie-flush race doesn't apply. Closes #40.
 
