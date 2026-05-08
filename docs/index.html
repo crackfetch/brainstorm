@@ -4,10 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>brz - YAML-driven browser automation for the terminal</title>
-<meta name="description" content="brz is a single-binary CLI that drives a real Chrome browser from YAML workflow definitions. Inspect pages, automate workflows, verify results. Built for developers and LLM agents.">
-<meta name="keywords" content="browser automation, CLI, YAML, headless Chrome, web scraping, LLM agent, devtools, Go, workflow automation, stealth browser, headless browser automation">
-<meta property="og:title" content="brz - Browser automation for the terminal">
-<meta property="og:description" content="YAML-driven browser automation. One binary. Zero dependencies. Built for developers and LLM agents.">
+<meta name="description" content="brz is a single-binary CLI that drives a real Chrome browser from YAML workflow definitions — and an MCP server that lets any LLM (Claude Code, Cursor) drive a real browser through tool calls. Inspect, automate, replay, recover from failure.">
+<meta name="keywords" content="browser automation, CLI, YAML, headless Chrome, web scraping, LLM agent, MCP, Model Context Protocol, Claude Code, devtools, Go, workflow automation, stealth browser, headless browser automation">
+<meta property="og:title" content="brz - Browser automation for the terminal + MCP server for LLMs">
+<meta property="og:description" content="YAML-driven browser automation. MCP server mode lets Claude, Cursor, and any LLM drive a real browser through structured tool calls. One binary. Zero dependencies.">
 <meta property="og:type" content="website">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>▸</text></svg>">
@@ -1157,8 +1157,8 @@
 <!-- TICKER -->
 <div class="ticker">
   <div class="ticker-inner">
-    YAML-DRIVEN BROWSER AUTOMATION &nbsp;&nbsp;/&nbsp;&nbsp; BREW INSTALL CRACKFETCH/TAP/BRZ &nbsp;&nbsp;/&nbsp;&nbsp; STEALTH-HARDENED &nbsp;&nbsp;/&nbsp;&nbsp; JSON OUTPUT &nbsp;&nbsp;/&nbsp;&nbsp; BUILT FOR LLM AGENTS &nbsp;&nbsp;/&nbsp;&nbsp; ZERO DEPENDENCIES &nbsp;&nbsp;/&nbsp;&nbsp; SESSION PERSISTENCE &nbsp;&nbsp;/&nbsp;&nbsp; 12 STEP TYPES &nbsp;&nbsp;/&nbsp;&nbsp; 9 EVAL ASSERTIONS &nbsp;&nbsp;/&nbsp;&nbsp; SEMANTIC EXIT CODES &nbsp;&nbsp;/&nbsp;&nbsp; PUBLIC GO API &nbsp;&nbsp;/&nbsp;&nbsp;
-    YAML-DRIVEN BROWSER AUTOMATION &nbsp;&nbsp;/&nbsp;&nbsp; BREW INSTALL CRACKFETCH/TAP/BRZ &nbsp;&nbsp;/&nbsp;&nbsp; STEALTH-HARDENED &nbsp;&nbsp;/&nbsp;&nbsp; JSON OUTPUT &nbsp;&nbsp;/&nbsp;&nbsp; BUILT FOR LLM AGENTS &nbsp;&nbsp;/&nbsp;&nbsp; ZERO DEPENDENCIES &nbsp;&nbsp;/&nbsp;&nbsp; SESSION PERSISTENCE &nbsp;&nbsp;/&nbsp;&nbsp; 12 STEP TYPES &nbsp;&nbsp;/&nbsp;&nbsp; 9 EVAL ASSERTIONS &nbsp;&nbsp;/&nbsp;&nbsp; SEMANTIC EXIT CODES &nbsp;&nbsp;/&nbsp;&nbsp; PUBLIC GO API &nbsp;&nbsp;/&nbsp;&nbsp;
+    YAML-DRIVEN BROWSER AUTOMATION &nbsp;&nbsp;/&nbsp;&nbsp; MCP SERVER FOR ANY LLM &nbsp;&nbsp;/&nbsp;&nbsp; BREW INSTALL CRACKFETCH/TAP/BRZ &nbsp;&nbsp;/&nbsp;&nbsp; STEALTH-HARDENED &nbsp;&nbsp;/&nbsp;&nbsp; JSON OUTPUT &nbsp;&nbsp;/&nbsp;&nbsp; RECORD + REPLAY &nbsp;&nbsp;/&nbsp;&nbsp; FAILURE FORENSICS &nbsp;&nbsp;/&nbsp;&nbsp; SITE-DRIFT DETECTION &nbsp;&nbsp;/&nbsp;&nbsp; SESSION PERSISTENCE &nbsp;&nbsp;/&nbsp;&nbsp; SEMANTIC EXIT CODES &nbsp;&nbsp;/&nbsp;&nbsp; ZERO DEPENDENCIES &nbsp;&nbsp;/&nbsp;&nbsp;
+    YAML-DRIVEN BROWSER AUTOMATION &nbsp;&nbsp;/&nbsp;&nbsp; MCP SERVER FOR ANY LLM &nbsp;&nbsp;/&nbsp;&nbsp; BREW INSTALL CRACKFETCH/TAP/BRZ &nbsp;&nbsp;/&nbsp;&nbsp; STEALTH-HARDENED &nbsp;&nbsp;/&nbsp;&nbsp; JSON OUTPUT &nbsp;&nbsp;/&nbsp;&nbsp; RECORD + REPLAY &nbsp;&nbsp;/&nbsp;&nbsp; FAILURE FORENSICS &nbsp;&nbsp;/&nbsp;&nbsp; SITE-DRIFT DETECTION &nbsp;&nbsp;/&nbsp;&nbsp; SESSION PERSISTENCE &nbsp;&nbsp;/&nbsp;&nbsp; SEMANTIC EXIT CODES &nbsp;&nbsp;/&nbsp;&nbsp; ZERO DEPENDENCIES &nbsp;&nbsp;/&nbsp;&nbsp;
   </div>
 </div>
 
@@ -1167,6 +1167,7 @@
   <div class="nav-inner">
     <a href="#" class="nav-logo">BRZ</a>
     <ul class="nav-links">
+      <li><a href="#mcp">MCP</a></li>
       <li><a href="#how-it-works">How it works</a></li>
       <li><a href="#commands">Commands</a></li>
       <li><a href="#workflows">Workflows</a></li>
@@ -1197,7 +1198,7 @@
       > STEALTH MODULE ... <span class="ready">INJECTED</span>
     </div>
     <div class="hero-boot" style="animation-delay: 0.7s;">
-      > SYSTEM.INIT // BRZ V0.9.1 // <span class="ready">STATUS: ONLINE</span>
+      > SYSTEM.INIT // BRZ V0.15.0 // <span class="ready">STATUS: ONLINE</span>
     </div>
     <div class="hero-loader"></div>
 
@@ -1205,13 +1206,13 @@
 
     <p class="hero-sub">
       Write YAML. brz clicks the buttons.<br>
-      One Go binary. Stealth baked in.<br>
-      Works alone or inside your LLM agent.
+      Or run <code>brz mcp</code> and let Claude drive the browser directly.<br>
+      One Go binary. Stealth baked in.
     </p>
 
     <div class="hero-actions">
-      <a href="#how-it-works" class="btn btn-primary">Get Started</a>
-      <a href="https://github.com/crackfetch/brainstorm" class="btn btn-ghost" target="_blank" rel="noopener">View Source</a>
+      <a href="#mcp" class="btn btn-primary">Use it from Claude</a>
+      <a href="#how-it-works" class="btn btn-ghost">Or write YAML</a>
     </div>
 
     <div class="install-group">
@@ -1387,8 +1388,8 @@
 <section id="commands">
   <div class="container">
     <div class="section-label fade-in">// Commands</div>
-    <h2 class="section-title fade-in">Eight commands. That's the whole CLI.</h2>
-    <p class="section-desc fade-in">Each one does one thing. Pipe them together. Let your agent call them in a loop.</p>
+    <h2 class="section-title fade-in">A small CLI of single-purpose tools.</h2>
+    <p class="section-desc fade-in">Each one does one thing. Pipe them together. Let your agent call them in a loop — or skip the shell-out and use <a href="#mcp">MCP mode</a>.</p>
 
     <div class="cmd-grid fade-in">
       <div class="cmd-card">
@@ -1439,9 +1440,49 @@
         <div class="cmd-flags"><span class="cmd-flag">--json</span></div>
       </div>
       <div class="cmd-card">
+        <h3>brz <span>mcp</span></h3>
+        <div class="cmd-usage">brz mcp [--headed] [--idle-timeout 5m]</div>
+        <p>Run a Model Context Protocol server over stdio. Drops nine browser tools into Claude Code, Cursor, or any MCP client. <a href="#mcp">Details ↑</a></p>
+        <div class="cmd-flags">
+          <span class="cmd-flag">--headed</span>
+          <span class="cmd-flag">--idle-timeout</span>
+          <span class="cmd-flag">--profile</span>
+        </div>
+      </div>
+      <div class="cmd-card">
+        <h3>brz <span>probe</span></h3>
+        <div class="cmd-usage">brz probe &lt;url&gt; [--headless]</div>
+        <p>Interactive selector REPL. Type CSS or XPath, see live matches highlighted in the browser. The fastest way to write a workflow.</p>
+        <div class="cmd-flags"><span class="cmd-flag">--headless</span></div>
+      </div>
+      <div class="cmd-card">
+        <h3>brz <span>fmt</span></h3>
+        <div class="cmd-usage">brz fmt [--diff|--stdout] &lt;file&gt;...</div>
+        <p>Canonicalize workflow YAML. Stable key order, comments preserved, idempotent. Works as a CI gate or a stdin→stdout filter.</p>
+        <div class="cmd-flags"><span class="cmd-flag">--diff</span><span class="cmd-flag">--stdout</span></div>
+      </div>
+      <div class="cmd-card">
+        <h3>brz <span>lint</span></h3>
+        <div class="cmd-usage">brz lint [--strict] [--json] &lt;file&gt;...</div>
+        <p>Schema-check plus smell-check. Flags brittle CSS-in-JS selectors, untimed downloads, JS-truthy eval waits, undeclared env vars. JSON output for editor integration.</p>
+        <div class="cmd-flags"><span class="cmd-flag">--strict</span><span class="cmd-flag">--json</span></div>
+      </div>
+      <div class="cmd-card">
+        <h3>brz <span>record</span></h3>
+        <div class="cmd-usage">brz record &lt;wf&gt; &lt;action&gt; --cassette FILE</div>
+        <p>Run a workflow and capture every (request, response) pair into a JSON cassette. Bodies stored base64, 5MB cap.</p>
+        <div class="cmd-flags"><span class="cmd-flag">--cassette</span><span class="cmd-flag">--no-body-cap</span></div>
+      </div>
+      <div class="cmd-card">
+        <h3>brz <span>replay</span></h3>
+        <div class="cmd-usage">brz replay &lt;wf&gt; &lt;action&gt; --from cassette</div>
+        <p>Re-run against the cassette with zero real network. <code>--strict</code> fails on any unmatched request — perfect for CI.</p>
+        <div class="cmd-flags"><span class="cmd-flag">--from</span><span class="cmd-flag">--strict</span></div>
+      </div>
+      <div class="cmd-card">
         <h3>brz <span>prompt</span></h3>
         <div class="cmd-usage">brz prompt</div>
-        <p>Print the embedded LLM agent prompt. Copy into your agent's system prompt.</p>
+        <p>Print the embedded LLM agent prompt. Paste into your agent's system prompt if you're not using MCP mode.</p>
       </div>
       <div class="cmd-card">
         <h3>brz <span>version</span></h3>
@@ -1455,6 +1496,7 @@
       <div class="exit-code"><div class="exit-code-num c1">1</div><div class="exit-code-label">Step Failed</div></div>
       <div class="exit-code"><div class="exit-code-num c2">2</div><div class="exit-code-label">Bad Workflow</div></div>
       <div class="exit-code"><div class="exit-code-num c3">3</div><div class="exit-code-label">Browser Error</div></div>
+      <div class="exit-code"><div class="exit-code-num c1">4</div><div class="exit-code-label">Drift Detected</div></div>
     </div>
   </div>
 </section>
@@ -1553,11 +1595,66 @@
 <hr class="divider">
 
 <!-- AGENT SECTION -->
+<!-- MCP FLAGSHIP -->
+<section id="mcp">
+  <div class="container">
+    <div class="section-label fade-in">// New in v0.14</div>
+    <h2 class="section-title fade-in">Drop brz into Claude. Start browsing.</h2>
+    <p class="section-desc fade-in"><code>brz mcp</code> is a Model Context Protocol server. Wire it into Claude Code, Cursor, or any MCP-speaking client and the model gets nine browser tools it can call directly — no YAML, no shell-out, no glue code. Same primitive as Read or Bash, but for the web.</p>
+
+    <div class="agent-grid fade-in">
+      <div>
+        <div class="code-block">
+          <div class="code-header">
+            <div class="code-dots"><span class="code-dot"></span><span class="code-dot"></span><span class="code-dot"></span></div>
+            <span class="code-header-title">~/.claude/mcp_settings.json</span>
+          </div>
+          <div class="code-body">
+<div><span class="comment">// Add this once. Restart Claude Code.</span></div>
+<div><span class="comment">// The model gets browser_goto, browser_click,</span></div>
+<div><span class="comment">// browser_extract, browser_screenshot, ... for free.</span></div>
+<div>&nbsp;</div>
+<div>{</div>
+<div>&nbsp;&nbsp;<span class="str">"mcpServers"</span>: {</div>
+<div>&nbsp;&nbsp;&nbsp;&nbsp;<span class="str">"brz"</span>: {</div>
+<div>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="str">"command"</span>: <span class="str">"brz"</span>,</div>
+<div>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="str">"args"</span>: [<span class="str">"mcp"</span>, <span class="str">"--headed"</span>]</div>
+<div>&nbsp;&nbsp;&nbsp;&nbsp;}</div>
+<div>&nbsp;&nbsp;}</div>
+<div>}</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="agent-cards">
+        <div class="agent-card">
+          <h3>Nine browser tools, ready to call</h3>
+          <p><code>browser_goto</code>, <code>browser_click</code>, <code>browser_type</code>, <code>browser_extract</code>, <code>browser_screenshot</code>, <code>browser_eval</code>, <code>browser_wait_for</code>, <code>browser_get_url</code>, <code>browser_session_info</code>. Each ships a JSON schema the model introspects via <code>tools/list</code>.</p>
+        </div>
+        <div class="agent-card">
+          <h3>Stateful sessions across tool calls</h3>
+          <p>One Chrome instance per <code>brz mcp</code> process, lazy-launched on first navigation. The model logs in once, then every subsequent tool call sees the same browser. Calls are serialized through a single mutex — no race conditions.</p>
+        </div>
+        <div class="agent-card">
+          <h3>Clean lifecycle</h3>
+          <p>Stdin EOF or a configurable idle timeout (default 5m) tears down the browser cleanly. SIGINT/SIGTERM too. No leaked Chromium processes when the host disconnects.</p>
+        </div>
+        <div class="agent-card">
+          <h3>Hand-rolled, zero new deps</h3>
+          <p>JSON-RPC 2.0 framing over stdio. Stdout is the protocol stream; all logs go to stderr. You can debug it by piping JSON-RPC requests in directly — no MCP SDK required to introspect.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<hr class="divider">
+
 <section id="agents">
   <div class="container">
     <div class="section-label fade-in">// Built for Agents</div>
-    <h2 class="section-title fade-in">Your LLM's browser.</h2>
-    <p class="section-desc fade-in">brz outputs JSON when piped, returns meaningful exit codes, and includes similar selectors in error messages so your agent can self-correct.</p>
+    <h2 class="section-title fade-in">Or drive it from the shell.</h2>
+    <p class="section-desc fade-in">If you're not using MCP, brz still plays nice with agents that shell out. JSON output when piped, semantic exit codes, similar-selector hints on failure so the agent can self-correct.</p>
 
     <div class="agent-grid fade-in">
       <div>
@@ -1649,6 +1746,26 @@
       <div class="feature-card">
         <h3>Public Go API</h3>
         <p>Import the workflow/ package into your own Go code. It's mutex-protected and safe to call from multiple goroutines.</p>
+      </div>
+      <div class="feature-card">
+        <h3>Failure Forensics</h3>
+        <p>When a workflow fails, brz writes a self-contained tarball with screenshot, DOM, console log, stderr, allowlisted env, and the workflow itself. One link in a bug report = full forensics.</p>
+      </div>
+      <div class="feature-card">
+        <h3>Site-Drift Detection</h3>
+        <p><code>--baseline</code> snapshots selector hits on a known-good run. <code>--check-drift</code> warns when counts or text fingerprints change. <code>--strict-drift</code> turns drift into a CI failure.</p>
+      </div>
+      <div class="feature-card">
+        <h3>Record + Replay</h3>
+        <p>Capture every request/response into a JSON cassette. Replay later with zero real network. Tells you whether the site changed or your workflow regressed.</p>
+      </div>
+      <div class="feature-card">
+        <h3>Structured Event Stream</h3>
+        <p><code>brz run --events=jsonl</code> emits one JSON object per step on stdout. Pipe through <code>jq</code> or stream-parse from your driver process for live progress.</p>
+      </div>
+      <div class="feature-card">
+        <h3>Selector Aliases</h3>
+        <p>Centralize brittle selectors with a top-level <code>aliases:</code> map. Reference them as <code>${aliases.NAME}</code>. <code>aliases_from:</code> shares libraries across workflows.</p>
       </div>
     </div>
   </div>
