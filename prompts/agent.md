@@ -130,6 +130,28 @@ brz validate <workflow.yaml> [--json]
 brz actions <workflow.yaml> [--json]
 ```
 
+## Diagnostic Commands
+
+### status — print a snapshot of brz's local state
+
+```bash
+brz status [--json]
+```
+
+Reports:
+- Resolved Chrome profile directory and whether a `SingletonLock` file is present (a leftover lock from a crashed launch — brz removes stale locks on next start, but seeing it here lets you debug "why won't my next run start" without launching).
+- Running brz-launched Chromium processes: PID, executable path, `--user-data-dir` argument. Detects brz ownership via exact match against the configured profile or the `brz-ephemeral-*` prefix that `--ephemeral` creates.
+- Downloads tmpdir occupancy (`<TMPDIR>/brz-downloads`): file count, total bytes, newest timestamp.
+- Failure-screenshot count from past failed actions in `<TMPDIR>` (`*_failed_*.png` and `*_before_*.jpg`).
+
+Always exits 0; status is informational. Pipe-friendly via `--json`. Useful when:
+- You're not sure if a previous brz run left a Chrome process behind
+- A workflow is hitting `SingletonLock` errors and you want to see whether the lock is held
+- You want to know how much disk brz is using under `/tmp`
+- An LLM agent driving brz needs to inspect its environment without launching anything
+
+On Windows the process scan is skipped (no `ps`); the rest of the report still works.
+
 ## Workflow YAML Format
 
 ```yaml
