@@ -121,8 +121,22 @@ On failure, `screenshot_before` shows the page BEFORE the failed step ran (JPEG,
 ### validate — check workflow syntax
 
 ```bash
-brz validate <workflow.yaml> [--json]
+brz validate [--strict] [--json] <workflow.yaml>
 ```
+
+Note: flags must come BEFORE the positional file path. Go's `flag` parser stops at the first positional argument, so `brz validate workflow.yaml --strict` would silently run leniently — always put `--strict` first.
+
+By default `validate` is lenient: unknown fields in YAML are silently dropped (yaml.v3 default). This preserves backward compat for older workflows that may have stale fields.
+
+`--strict` switches the loader to `KnownFields(true)` so any typo is rejected with a YAML line number. Catches the canonical bug where `save_too: ...` (one-character typo of `save_to:`) passes basic validation, then silently fails at runtime because the field goes nowhere.
+
+```bash
+$ brz validate --strict workflow.yaml
+parse workflow workflow.yaml: yaml: unmarshal errors:
+  line 7: field save_too not found in type workflow.DownloadStep
+```
+
+Use `--strict` in CI / pre-commit; rely on the lenient default for ad-hoc one-offs.
 
 ### actions — list available actions
 

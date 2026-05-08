@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"regexp"
@@ -62,6 +63,48 @@ func LoadFromBytes(data []byte) (*Workflow, error) {
 	}
 
 	return &w, nil
+}
+
+// LoadStrictFromBytes parses workflow YAML with KnownFields enforcement —
+// any field name that doesn't match the Workflow / Action / Step schema
+// returns an error with a YAML line number. This catches typos like
+// `save_too:` (close to `save_to:`) at validate time instead of at run
+// time when the workflow silently misbehaves.
+//
+// Default Load / LoadFromBytes stays lenient so existing workflows that
+// rely on yaml.v3's default unknown-field behavior keep working. Callers
+// opt into strict by reaching for this function (driven by `validate
+// --strict` from the CLI).
+func LoadStrictFromBytes(data []byte) (*Workflow, error) {
+	var w Workflow
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(&w); err != nil {
+		return nil, fmt.Errorf("parse workflow: %w", err)
+	}
+
+	if w.Name == "" {
+		return nil, fmt.Errorf("workflow: missing 'name' field")
+	}
+	if len(w.Actions) == 0 {
+		return nil, fmt.Errorf("workflow: no actions defined")
+	}
+
+	return &w, nil
+}
+
+// LoadStrict reads a YAML file and parses with KnownFields enforcement.
+// File-system equivalent of LoadStrictFromBytes.
+func LoadStrict(path string) (*Workflow, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read workflow %s: %w", path, err)
+	}
+	w, err := LoadStrictFromBytes(data)
+	if err != nil {
+		return nil, fmt.Errorf("workflow %s: %w", path, err)
+	}
+	return w, nil
 }
 
 // InterpolateEnv replaces ${VAR_NAME} patterns with environment variable values.
