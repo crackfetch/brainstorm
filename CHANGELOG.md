@@ -9,6 +9,43 @@ All notable changes to this project will be documented in this file.
 - Port is discovered from `<profileDir>/DevToolsActivePort` after Chrome starts (polled up to 5s). New `DebugPort()` getter exposes it to callers.
 - `profileDir` is now required when `WithLoginURL` is set (it was always needed in practice; now enforced explicitly with a clear error).
 
+## [0.13.0] - 2026-05-08
+
+### Added
+- `handoff` step type pauses a workflow for a human takeover. Switches the browser to headed mode (relaunching from headless and re-navigating to the URL the user was on so the page handle isn't stale), prints a clear stderr banner with the message + current URL + resume condition, then blocks until the resume signal fires. Resume signals: `wait_url` (substring match) or `wait_eval` (JS function expression — wrapped in `Boolean(expr())` so JS-truthy values like `1`, `"ready"`, or DOM nodes resume, not just strict-bool `true`). Default 10m timeout. Use this instead of a long `wait_url` when you want the intent ("stop and let the human drive") to be explicit and the window to be guaranteed visible.
+- `step.retry` wraps any step with a retry-on-failure block: `retry: { count, backoff, initial_delay }`. Backoff: `linear`, `exponential`, or `none`. The click-then-download look-ahead survives retries — `pendingDownloadWait` is registered before the retry loop and persists across attempts.
+- `action.on_error` names a recovery action that runs after terminal failure (after step retries, after auto-escalation, after eval assertions). Recovery runs once. `ok` stays `false` on the original action; the error string carries `; on_error 'X' recovery succeeded` (or `... also failed: ...`). Depth limit of 1 prevents recovery chains.
+
+### Fixed
+- `download` step now honors its `Timeout` field. Previously rod's `WaitDownload` callback could block indefinitely when no download arrived after a click. Default 60s if unset.
+- Eval-assertion failures now run `on_error` recovery if configured. Previously the post-action eval-failure path returned without going through the recovery hook.
+- Stale `pendingDownloadWait` is cleared when an action fails terminally, so a recovery action's click-then-download flow gets a clean look-ahead instead of inheriting the failed primary's pending state.
+
+### For contributors
+- `RunAction` is split into a public lock-then-dispatch entry plus a private `runActionLocked` body, letting recovery actions reuse the existing `e.mu` without trying to re-acquire it.
+
+## [0.12.0] - 2026-05-08
+
+### Added
+- `click.visible: true` filters selector matches to visible elements (`offsetParent != null` + non-zero rect) before applying `nth` or `text`. Combined with `nth: -1` (now supported), it cleanly disambiguates the common case where a page-level button and a modal-level submit share the same selector.
+- `click.nth: -N` supports negative indices counting from the end of the matched set. `-1` is last, `-2` second-to-last. Positive `nth` keeps its historical 1-indexed-via-zero-elision behavior.
+- `download.save_as` is now wired at execution: when set, the captured download is renamed to the target path. `${ENV}` interpolation and leading `~` expansion both supported. Parent dirs auto-created. Falls back to copy+remove if `os.Rename` fails (different filesystem). `download.save_to` is a sibling YAML alias.
+- `download.return_to: previous | <url>` re-navigates the tab once the download is captured. `previous` restores the URL the tab was on right before the click that triggered the download — fixes the `about:blank` trap where subsequent `wait_url` / interaction steps fail because the tab navigated away during the download.
+- `wait_enabled` step type polls until an element is enabled (no `disabled` attribute, no `aria-disabled="true"`). Pairs with `click` for forms gated by anti-bot challenges that keep the submit button disabled until verification.
+- `brz status [--json]` prints a diagnostic snapshot: resolved Chrome profile dir + `SingletonLock` state, running brz-launched Chromium PIDs (PID + exe + user-data-dir), downloads tmpdir occupancy, failure-artifact counts. Always exits 0; informational only.
+- `brz logs [--follow] [--limit N] [--json]` lists `*_failed_*.png` and `*_before_*.jpg` artifacts in `$TMPDIR` newest-first. `--follow` polls 1s and emits NDJSON. Use to find the last failure screenshots without `grep`'ing `/tmp` by hand.
+- `brz examples [list | cat <name> | scaffold <name> [<dir>]]` surfaces bundled workflow YAML patterns. Examples are embedded in the binary via `//go:embed`. Three new patterns added covering this release's features: `captcha-gated-form`, `click-visible-among-duplicates`, `modal-export-with-save-and-return`.
+- `brz validate --strict` switches to `KnownFields(true)` so unknown YAML fields fail validation with a line number and a "Did you mean?" suggestion built from a Levenshtein match against the type's declared yaml tags. The wrapping error preserves `errors.As` / `errors.Is` chains via an `Unwrap()` method.
+- Headed-launch announcement: brz prints one stderr line whenever it launches a visible Chromium: `[brz] Headed Chromium launched (pid=N exe=PATH profile=DIR) — Cmd+Tab to focus if not visible`. macOS additionally runs `osascript activate` on the launched bundle so the window comes to foreground instead of opening behind whatever app currently owns focus.
+
+### Changed
+- Step-failure error strings now include a one-line "Nearby visible elements" hint when `PageElements` were captured. Hidden elements filtered. Rune-safe truncation for non-ASCII labels. The rich data still lives on `ActionResult.PageElements` for programmatic consumers.
+
+### For contributors
+- New package `workflows/examples` embeds the bundled YAML files via `//go:embed` and exposes `Names()`, `Read(name)`, `Summary(yaml)` helpers.
+- New test helper `skipIfNoDisplay(t)` skips headed-mode E2E tests on Linux runners without an X / Wayland session.
+- The strict-suggest field registry is built once at package init via reflection over every workflow type. Adding a new schema type requires adding it to `buildFieldRegistry`'s slice; tests pin the current set so the registry can't quietly fall behind.
+
 ## [0.9.1.0] - 2026-04-14
 
 ### Added
