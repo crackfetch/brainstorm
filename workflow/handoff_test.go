@@ -62,6 +62,7 @@ func TestHandoffStep_StepTypeAndResolve(t *testing.T) {
 
 func TestDoHandoff_RejectsMissingSignal(t *testing.T) {
 	skipIfNoChrome(t)
+	skipIfNoDisplay(t) // headed launch needs an X / Wayland session
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("ok"))
 	}))
@@ -85,6 +86,7 @@ func TestDoHandoff_RejectsMissingSignal(t *testing.T) {
 
 func TestDoHandoff_RejectsBothSignals(t *testing.T) {
 	skipIfNoChrome(t)
+	skipIfNoDisplay(t) // headed launch needs an X / Wayland session
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("ok"))
 	}))
@@ -114,6 +116,7 @@ func TestDoHandoff_RejectsBothSignals(t *testing.T) {
 
 func TestDoHandoff_WaitURL_ResumesWhenURLMatches(t *testing.T) {
 	skipIfNoChrome(t)
+	skipIfNoDisplay(t) // headed launch needs an X / Wayland session
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/dashboard") {
 			w.Write([]byte(`<html><body>dashboard</body></html>`))
@@ -163,6 +166,7 @@ func TestDoHandoff_WaitURL_ResumesWhenURLMatches(t *testing.T) {
 
 func TestDoHandoff_WaitEval_ResumesWhenEvalTruthy(t *testing.T) {
 	skipIfNoChrome(t)
+	skipIfNoDisplay(t) // headed launch needs an X / Wayland session
 	// Page sets a sentinel global after 1s.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`<html><body>
@@ -199,6 +203,7 @@ func TestDoHandoff_WaitEval_ResumesWhenEvalTruthy(t *testing.T) {
 
 func TestDoHandoff_TimesOut(t *testing.T) {
 	skipIfNoChrome(t)
+	skipIfNoDisplay(t) // headed launch needs an X / Wayland session
 	// A wait_url that will never match within the timeout.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`<html><body>static</body></html>`))
@@ -236,6 +241,7 @@ func TestDoHandoff_TimesOut(t *testing.T) {
 
 func TestDoHandoff_HeadlessEscalation_RestoresPage(t *testing.T) {
 	skipIfNoChrome(t)
+	skipIfNoDisplay(t) // headed launch needs an X / Wayland session
 	// Pin the page-restoration fix: when a workflow runs HEADLESS and
 	// hits a handoff, restart() replaces the rod browser handle. Without
 	// nilling e.page + re-navigating, the resume loop polls a stale
@@ -281,6 +287,7 @@ func TestDoHandoff_HeadlessEscalation_RestoresPage(t *testing.T) {
 
 func TestDoHandoff_WaitEval_HandlesJSTruthy(t *testing.T) {
 	skipIfNoChrome(t)
+	skipIfNoDisplay(t) // headed launch needs an X / Wayland session
 	// wait_eval must accept JS-truthy values, not just strict bool true.
 	// "ready" is a string literal — without the Boolean wrap, rod would
 	// see the string and Bool() coercion behavior would be ambiguous.
