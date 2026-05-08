@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/crackfetch/brainstorm/internal/baseline"
 	"github.com/crackfetch/brainstorm/internal/bundle"
 	"github.com/crackfetch/brainstorm/internal/config"
 	"github.com/crackfetch/brainstorm/internal/events"
@@ -34,6 +35,7 @@ const (
 	exitActionFailed  = 1
 	exitWorkflowError = 2
 	exitBrowserError  = 3
+	exitDriftDetected = 4 // --strict-drift: drift signals from --check-drift
 )
 
 // envFlag collects repeatable --env KEY=VAL flags.
@@ -187,6 +189,9 @@ func cmdRun(args []string) {
 	eventsFlag := fs.String("events", "", "Emit structured event stream on stdout. Values: jsonl. Forces stdout to JSONL only; final result still prints last (also as JSON).")
 	bundleMode := fs.String("bundle-on-fail", envOr("BRZ_BUNDLE_ON_FAIL", "auto"), "Write a forensics bundle on failure: auto|never")
 	bundleDir := fs.String("bundle-dir", os.Getenv("BRZ_BUNDLE_DIR"), "Override bundle output directory (default: ~/.brz/failures)")
+	baselinePath := fs.String("baseline", "", "Write a drift baseline on success (path or 'auto' for <wf-dir>/.brz-baselines/<wf>.baseline.json)")
+	checkDrift := fs.String("check-drift", "", "Compare selector hits against this baseline file (warns to stderr)")
+	strictDrift := fs.Bool("strict-drift", false, "Fail the run if --check-drift surfaces drift (exit 4)")
 
 	fs.Usage = func() { printRunUsage() }
 	fs.Parse(args)
@@ -310,6 +315,38 @@ func cmdRun(args []string) {
 	}
 	opts = append(opts, workflow.WithEventEmitter(emitter))
 
+	// Resolve drift baseline plumbing before constructing the executor so
+	// we can attach the observer via an option. Both flags are independent:
+	// --baseline writes a snapshot at the end; --check-drift reads one and
+	// warns mid-run.
+	var (
+		comparator  *baseline.Comparator
+		driftEvents []baseline.Drift
+	)
+	if *checkDrift != "" {
+		b, err := baseline.ReadFile(*checkDrift)
+		if err != nil {
+			outputError(useJSON, exitWorkflowError, fmt.Sprintf("read baseline: %v", err))
+			return
+		}
+		comparator = baseline.NewComparator(b)
+	}
+	onDrift := func(d baseline.Drift) {
+		driftEvents = append(driftEvents, d)
+		// Surface to stderr immediately so a long run shows drift as it
+		// happens, not only at the end. TODO(post-#28): emit through the
+		// JSONL event stream as drift_warning / drift_error events.
+		fmt.Fprintln(os.Stderr, d.String())
+	}
+	// Only attach the observer when drift features are actually requested.
+	// Otherwise default `brz run` would pay a per-step Elements()+Text()
+	// probe cost it didn't ask for.
+	var recorder *workflow.RecordingObserver
+	if *baselinePath != "" || *checkDrift != "" {
+		recorder = workflow.NewRecordingObserver(comparator, onDrift)
+		opts = append(opts, workflow.WithObserver(recorder))
+	}
+
 	exec := workflow.NewExecutor(w, opts...)
 
 	// Inject --env flags into workflow env
@@ -393,6 +430,17 @@ func cmdRun(args []string) {
 		}
 	}
 
+	// If strict-drift is on AND we collected drift events, mark the result
+	// as failed BEFORE we encode it so a JSON consumer never sees ok=true
+	// alongside exit code 4.
+	willStrictFailEarly := *strictDrift && len(driftEvents) > 0
+	if willStrictFailEarly && lastResult != nil && lastResult.OK {
+		lastResult.OK = false
+		if lastResult.Error == "" {
+			lastResult.Error = fmt.Sprintf("--strict-drift: %d drift event(s)", len(driftEvents))
+		}
+	}
+
 	// Final workflow_end + result line.
 	if emitEvents {
 		status := events.StatusOK
@@ -425,20 +473,17 @@ func cmdRun(args []string) {
 		printHumanResult(lastResult)
 	}
 
-	if !lastResult.OK {
-		// Stop the console listener BEFORE bundling so sink.Lines() is stable.
+	// Real failure (not a strict-drift-induced one): write the forensics
+	// bundle, then exit with the original failure code. Drift-induced
+	// failures are handled below — they shouldn't write a bundle.
+	if !lastResult.OK && !willStrictFailEarly {
 		if consoleSink != nil {
 			consoleSink.Stop()
 		}
-		// Drain + restore stderr BEFORE reading the buffer to avoid a data
-		// race with the tee goroutine. After this returns, no more writes
-		// reach the buffer and the goroutine has exited.
 		if stderrRestore != nil {
 			stderrRestore()
 			stderrRestore = nil
 		}
-		// Build forensics bundle BEFORE Close() — the page handle goes away
-		// on close and the screenshot/DOM capture needs a live browser.
 		if bundleEnabled {
 			writeFailureBundle(exec, w, workflowPath, lastResult, consoleSink, stderrBuf, *bundleDir)
 		}
@@ -447,6 +492,29 @@ func cmdRun(args []string) {
 	}
 	if consoleSink != nil {
 		consoleSink.Stop()
+	}
+
+	// Successful run: write the baseline snapshot if requested. We skip the
+	// write when --strict-drift fired so a drifted run doesn't clobber the
+	// known-good baseline (common when --baseline and --check-drift point
+	// at the same path).
+	if *baselinePath != "" && recorder != nil && !willStrictFailEarly {
+		path := baseline.ResolvePath(workflowPath, *baselinePath)
+		actionLabel := strings.Join(names, ",")
+		b := baseline.New(workflowPath, actionLabel, Version, time.Now(), recorder.Steps())
+		if err := b.WriteFile(path); err != nil {
+			fmt.Fprintf(os.Stderr, "WARN: failed to write baseline %s: %v\n", path, err)
+		} else if !useJSON {
+			fmt.Fprintf(os.Stderr, "wrote baseline: %s (%d steps)\n", path, len(recorder.Steps()))
+		}
+	} else if *baselinePath != "" && willStrictFailEarly {
+		fmt.Fprintf(os.Stderr, "skipping baseline write: --strict-drift fired (%d events) — would clobber known-good baseline\n", len(driftEvents))
+	}
+
+	// Strict drift: exit 4 (distinct from action failure).
+	if willStrictFailEarly {
+		fmt.Fprintf(os.Stderr, "FAIL: --strict-drift detected %d drift event(s); failing run\n", len(driftEvents))
+		os.Exit(exitDriftDetected)
 	}
 }
 
@@ -1037,6 +1105,7 @@ Exit codes:
   1  Action step failed — a browser step timed out, element not found, etc.
   2  Workflow error — invalid YAML, missing action name, bad file path
   3  Browser error — Chrome not found, failed to launch, connection refused
+  4  Drift detected — --strict-drift saw selector hits diverge from the baseline
 
 Environment variables:
   BRZ_HEADED=1       Show browser window (equivalent to --headed flag)
@@ -1105,6 +1174,11 @@ Flags:
   --profile DIR   Chrome profile directory for session/cookie persistence
   --ephemeral     Use a fresh temp profile (no cookies, no session reuse)
   --env KEY=VAL   Set a workflow env var (repeatable, e.g. --env USER=x --env PASS=y)
+  --baseline PATH       Write a drift baseline JSON on success. Use 'auto' for
+                        <wf-dir>/.brz-baselines/<wf>.baseline.json
+  --check-drift PATH    Compare selector hits / first-match text against this
+                        baseline file. Drift events print to stderr.
+  --strict-drift        Exit code 4 if --check-drift surfaces any drift.
 
 JSON output schema (success):
   {
