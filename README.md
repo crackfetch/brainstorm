@@ -65,11 +65,96 @@ brz examples [list|cat|scaffold]           Bundled workflow YAML patterns. Run `
 ### Utility
 
 ```
+brz mcp        Run a Model Context Protocol server over stdio
 brz version    Print version
 brz help       Show full help with output schemas
 ```
 
 Run `brz <command> --help` for detailed usage, JSON schemas, and examples.
+
+---
+
+## MCP Server Mode
+
+`brz mcp` turns brainstorm into a Model Context Protocol server. Any LLM client that speaks MCP — Claude Code, Cursor, the MCP inspector — can introspect the available tools and drive a real Chrome browser through tool calls. No YAML required.
+
+```bash
+brz mcp                              # default: 5-minute idle timeout, headless
+brz mcp --headed --idle-timeout 30m  # visible browser, longer idle window
+brz mcp --profile ~/my-chrome-data   # custom Chrome profile dir
+```
+
+The server speaks JSON-RPC 2.0 (newline-delimited) over stdin/stdout. All log output goes to stderr so the JSON-RPC stream stays clean.
+
+### Tools exposed (v1)
+
+| Tool                   | Purpose                                                     |
+| ---------------------- | ----------------------------------------------------------- |
+| `browser_goto`         | Navigate to a URL.                                          |
+| `browser_click`        | Click the nth element matching a CSS selector.              |
+| `browser_type`         | Focus a selector and type text. Optional submit/clear.      |
+| `browser_extract`      | Read text/html/attribute from elements matching a selector. |
+| `browser_screenshot`   | Capture a PNG (returned as MCP image content).              |
+| `browser_eval`         | Run a JS expression and return its JSON value.              |
+| `browser_wait_for`     | Wait for a selector to appear or a JS expression to be truthy. |
+| `browser_get_url`      | Current URL + title.                                        |
+| `browser_session_info` | Cookies count, viewport, user agent.                        |
+
+Each tool's full input schema is returned by the standard `tools/list` MCP request, so any client can introspect without docs.
+
+### Lifecycle
+
+- Chrome is lazy-launched on the first tool call that needs a page.
+- Concurrent tool calls are serialized through a single mutex around the browser handle.
+- On stdin EOF (host disconnect) or `--idle-timeout` of inactivity, the browser is torn down cleanly. SIGINT/SIGTERM also tear down before exit.
+
+### Wiring into Claude Code
+
+Claude Code reads MCP servers from `~/.claude/mcp_settings.json` (or your project-local equivalent). Add an entry like:
+
+```json
+{
+  "mcpServers": {
+    "brz": {
+      "command": "brz",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+For Claude Desktop, the equivalent block lives in `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "brz": {
+      "command": "/usr/local/bin/brz",
+      "args": ["mcp", "--headed"]
+    }
+  }
+}
+```
+
+Restart the host. The `brz` server will appear in the tool palette; the LLM can then drive the browser end-to-end.
+
+### Known v1 limitations
+
+- One browser per process. Multi-tab is not exposed; future tools could add it.
+- Tool calls are serialized through a single mutex around the rod browser. Concurrent `tools/call` requests from a single client run one-after-the-other.
+- A SIGINT received mid-tool-call is honored after the call returns (rod operations are not currently wired to a cancellable context).
+- JSON-RPC batch requests are explicitly rejected (`-32600 Invalid Request`).
+
+### Hand-driving the protocol
+
+For debugging you can pipe JSON-RPC requests in directly. The example below sends a minimal-shape `initialize` (real MCP clients also include `protocolVersion`, `capabilities`, and `clientInfo` in `params` — `brz mcp` accepts the minimal form so probes stay short):
+
+```bash
+printf '%s\n%s\n' \
+  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
+  '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
+  | brz mcp --idle-timeout 5s
+```
 
 ---
 

@@ -2170,6 +2170,16 @@ func (e *Executor) Page() *rod.Page {
 	return e.page
 }
 
+// Browser returns the underlying rod browser handle for advanced usage
+// (e.g. by the MCP server, which manages its own page lifecycle). Callers
+// must coordinate their own locking; the executor's mu is not held while
+// the returned browser is in use.
+func (e *Executor) Browser() *rod.Browser {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.browser
+}
+
 // KeyPress sends a keyboard input to the current page.
 func (e *Executor) KeyPress(key input.Key) error {
 	e.mu.Lock()
