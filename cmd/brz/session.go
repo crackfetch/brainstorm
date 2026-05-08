@@ -17,9 +17,11 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/crackfetch/brainstorm/workflow"
@@ -255,7 +257,8 @@ func writeFile0600(path string, data []byte) error {
 // waitForCaptureLogin polls Chrome's HTTP debug API for a page URL that
 // contains the success substring. Re-reads DevToolsActivePort each tick
 // because brz can return a stale port if a previous Chrome run's file is
-// still around (see brainstorm#41).
+// still around (see brainstorm#41). Returns early on SIGINT/SIGTERM so
+// Ctrl-C lets the deferred exec.Close() run instead of orphaning Chrome.
 func waitForCaptureLogin(exec *workflow.Executor, profileDir string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	port := exec.DebugPort()
@@ -266,8 +269,16 @@ func waitForCaptureLogin(exec *workflow.Executor, profileDir string, timeout tim
 	tick := time.NewTicker(2 * time.Second)
 	defer tick.Stop()
 
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
+
 	for {
-		<-tick.C
+		select {
+		case <-sigCh:
+			return fmt.Errorf("interrupted")
+		case <-tick.C:
+		}
 		if time.Now().After(deadline) {
 			return fmt.Errorf("timed out after %s", timeout)
 		}
