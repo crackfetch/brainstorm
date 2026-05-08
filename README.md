@@ -41,6 +41,7 @@ On first run, brz uses your existing Chrome installation. If Chrome isn't found,
 brz inspect <url> [--full]              Discover interactive elements on a page
 brz screenshot <url> [--output FILE]    Capture a full-page screenshot
 brz eval <url> <js-expression>          Execute JavaScript and return the result
+brz probe [--headless] <url>            Interactive selector REPL — type CSS/XPath, see live matches and highlights
 ```
 
 ### Workflow Execution
