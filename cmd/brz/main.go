@@ -76,6 +76,8 @@ func main() {
 		cmdStatus(os.Args[2:])
 	case "logs":
 		cmdLogs(os.Args[2:])
+	case "session":
+		cmdSession(os.Args[2:])
 	case "examples":
 		cmdExamples(os.Args[2:])
 	case "prompt":
@@ -740,6 +742,7 @@ Commands:
   actions    List all actions defined in a workflow with step counts
   status     Print a diagnostic snapshot (running browsers, profile dir, etc.)
   logs       List recent failure-screenshot artifacts in TempDir
+  session    Export/import portable browser session bundles (cookies + storage)
   examples   List, print, or scaffold bundled workflow YAML examples
   prompt     Print the LLM agent prompt (teaches an AI how to use brz)
   version    Print the brz version string

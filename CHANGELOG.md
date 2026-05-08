@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- `brz session export` reads cookies + per-origin `localStorage` / `sessionStorage` from a Chrome profile and emits a portable JSON bundle. Defaults to stdout; `--output FILE` writes to disk with mode `0600`. `--for-domain GLOB` (repeatable) filters by cookie domain so you can export only the state you need. `--include` selects scopes (`cookies,localstorage,sessionstorage`; `indexeddb` reserved for future use). When stdout is a TTY, prints a warning to stderr noting the bundle contains auth secrets.
+- `brz session import` reads a bundle from `--input FILE` or stdin and writes it into a Chrome profile via CDP `Storage.setCookies`. `--merge` (default) is additive; `--replace` clears existing cookies first. The resulting profile is "warm" — pre-loaded cookies avoid the cold-CDP attach signal that hCaptcha and similar anti-bot systems detect on a fresh login.
+- `internal/session` package owns the on-disk format (versioned JSON), domain-glob matching, and live-browser export/import. New tests cover format round-trip, glob matching, and `0600` permissions on bundle files.
+- Pipeable: `brz session export --for-domain '*.example.com' | ssh server brz session import`.
+- KNOWN LIMITATION: cross-process cookie persistence is unreliable on some Chrome builds — cookies set via CDP `Storage.setCookies` may live only in the in-memory cookie store and never reach the on-disk `Cookies` SQLite even after a graceful close. The in-process round-trip (a single `brz` invocation that imports and immediately uses the browser) is reliable. The recommended workflow for cross-process portability today is to run the import + the dependent workflow in one driver script that keeps the browser alive.
+
 ### Fixed
 - `launchForLogin` now uses `--remote-debugging-port=0` so the OS assigns a free port, eliminating collisions with other Chrome instances that happen to hold port 9222.
 - Port is discovered from `<profileDir>/DevToolsActivePort` after Chrome starts (polled up to 5s). New `DebugPort()` getter exposes it to callers.
