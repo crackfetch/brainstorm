@@ -1371,7 +1371,7 @@ func (e *Executor) doClick(c *ClickStep) error {
 	if c.Text == "" && !c.Visible && c.Nth == 0 {
 		el, err := e.page.Timeout(timeout).Element(selector)
 		if err != nil {
-			return fmt.Errorf("find element %q: %w", selector, err)
+			return fmt.Errorf("find element %s: %w", formatSelectorForError(selector, c.AliasName, e.workflow), err)
 		}
 		return el.Click(proto.InputMouseButtonLeft, 1)
 	}
@@ -1398,24 +1398,25 @@ func (e *Executor) doClick(c *ClickStep) error {
 					idx = len(els) + idx
 				}
 				if idx < 0 || idx >= len(els) {
-					return fmt.Errorf("selector %q: nth=%d but only %d match(es) after filters (visible=%v, text=%q)",
-						selector, c.Nth, len(els), c.Visible, c.Text)
+					return fmt.Errorf("selector %s: nth=%d but only %d match(es) after filters (visible=%v, text=%q)",
+						formatSelectorForError(selector, c.AliasName, e.workflow), c.Nth, len(els), c.Visible, c.Text)
 				}
 				return els[idx].Click(proto.InputMouseButtonLeft, 1)
 			}
 		}
 		if time.Now().After(deadline) {
+			selDesc := formatSelectorForError(selector, c.AliasName, e.workflow)
 			switch {
 			case c.Text != "" && c.Visible:
-				return fmt.Errorf("no visible element matching %q with text %q within %s (saw %d raw selector match(es))",
-					selector, c.Text, timeout, lastSeen)
+				return fmt.Errorf("no visible element matching %s with text %q within %s (saw %d raw selector match(es))",
+					selDesc, c.Text, timeout, lastSeen)
 			case c.Text != "":
-				return fmt.Errorf("no element matching %q with text %q within %s", selector, c.Text, timeout)
+				return fmt.Errorf("no element matching %s with text %q within %s", selDesc, c.Text, timeout)
 			case c.Visible:
-				return fmt.Errorf("no visible element matching %q within %s (saw %d raw selector match(es))",
-					selector, timeout, lastSeen)
+				return fmt.Errorf("no visible element matching %s within %s (saw %d raw selector match(es))",
+					selDesc, timeout, lastSeen)
 			default:
-				return fmt.Errorf("no element matching %q within %s", selector, timeout)
+				return fmt.Errorf("no element matching %s within %s", selDesc, timeout)
 			}
 		}
 		time.Sleep(pollInterval)
@@ -1458,7 +1459,7 @@ func filterElementsByText(els []*rod.Element, needle string) []*rod.Element {
 func (e *Executor) doFill(f *FillStep) error {
 	el, err := e.page.Timeout(30 * time.Second).Element(f.Selector)
 	if err != nil {
-		return fmt.Errorf("find element %q: %w", f.Selector, err)
+		return fmt.Errorf("find element %s: %w", formatSelectorForError(f.Selector, f.AliasName, e.workflow), err)
 	}
 
 	if f.Clear {
@@ -1480,7 +1481,7 @@ func (e *Executor) doSelect(s *SelectStep) error {
 
 	el, err := e.page.Timeout(timeout).Element(s.Selector)
 	if err != nil {
-		return fmt.Errorf("find element %q: %w", s.Selector, err)
+		return fmt.Errorf("find element %s: %w", formatSelectorForError(s.Selector, s.AliasName, e.workflow), err)
 	}
 
 	value := InterpolateEnv(s.Value, e.workflow.Env)
@@ -1554,7 +1555,7 @@ func (e *Executor) doSelect(s *SelectStep) error {
 			return nil
 		case result == "disabled":
 			if time.Now().After(deadline) {
-				return fmt.Errorf("select %q is still disabled after %s", s.Selector, timeout)
+				return fmt.Errorf("select %s is still disabled after %s", formatSelectorForError(s.Selector, s.AliasName, e.workflow), timeout)
 			}
 			time.Sleep(pollInterval)
 			continue
@@ -1571,7 +1572,7 @@ func (e *Executor) doSelect(s *SelectStep) error {
 func (e *Executor) doUpload(u *UploadStep) error {
 	el, err := e.page.Timeout(30 * time.Second).Element(u.Selector)
 	if err != nil {
-		return fmt.Errorf("find file input %q: %w", u.Selector, err)
+		return fmt.Errorf("find file input %s: %w", formatSelectorForError(u.Selector, u.AliasName, e.workflow), err)
 	}
 
 	var filePath string
@@ -1749,6 +1750,9 @@ func moveFile(src, dst string) error {
 func (e *Executor) doWaitVisible(w *WaitStep) error {
 	timeout := ParseTimeout(w.Timeout)
 	_, err := e.page.Timeout(timeout).Element(w.Selector)
+	if err != nil && w.AliasName != "" {
+		return fmt.Errorf("wait_visible %s: %w", formatSelectorForError(w.Selector, w.AliasName, e.workflow), err)
+	}
 	return err
 }
 
@@ -1803,7 +1807,7 @@ func (e *Executor) doWaitEnabled(w *WaitStep) error {
 			}
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("element %q did not become enabled within %s", w.Selector, timeout)
+			return fmt.Errorf("element %s did not become enabled within %s", formatSelectorForError(w.Selector, w.AliasName, e.workflow), timeout)
 		}
 		time.Sleep(pollInterval)
 	}

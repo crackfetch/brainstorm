@@ -1,6 +1,6 @@
 # Example: Export CSV from a web app, then POST it to an API
 #
-# Demonstrates: download, eval (fetch POST), the full data pipeline
+# Demonstrates: download, eval (fetch POST), aliases, the full data pipeline
 #
 # Pattern: browser export → download CSV → POST to API via fetch()
 # This is the core "data mover" workflow for syncing data between systems.
@@ -8,20 +8,29 @@
 # The eval step uses fetch() to POST data. The downloaded CSV content is
 # available as the page's last downloaded file, but for API uploads you
 # typically use eval with fetch() for more control over headers and format.
+#
+# `aliases:` centralizes the brittle selectors. If the seller's login form
+# rename their `name="email"` input, you fix it once here instead of in
+# every step that touches it.
 
 name: csv-export-and-post
 env:
   API_URL: https://api.example.com
   API_KEY: ${API_KEY}
+aliases:
+  email_input: 'input[name="email"]'
+  password_input: 'input[name="password"]'
+  submit_button: 'button[type="submit"]'
+  export_button: '#export-csv'
 
 actions:
   # Step 1: Log into the source system
   login:
     url: https://seller.example.com/login
     steps:
-      - fill: { selector: 'input[name="email"]', value: '${EMAIL}' }
-      - fill: { selector: 'input[name="password"]', value: '${PASSWORD}' }
-      - click: { selector: 'button[type="submit"]' }
+      - fill: { selector: '${aliases.email_input}', value: '${EMAIL}' }
+      - fill: { selector: '${aliases.password_input}', value: '${PASSWORD}' }
+      - click: { selector: '${aliases.submit_button}' }
       - wait_url: { match: 'dashboard', timeout: '30s' }
 
   # Step 2: Export inventory CSV
@@ -29,9 +38,9 @@ actions:
     url: https://seller.example.com/inventory/export
     steps:
       - label: "Wait for page to load"
-        wait_visible: { selector: '#export-csv', timeout: '10s' }
+        wait_visible: { selector: '${aliases.export_button}', timeout: '10s' }
       - label: "Click export"
-        click: { selector: '#export-csv' }
+        click: { selector: '${aliases.export_button}' }
       - label: "Download CSV"
         download: { timeout: '120s' }
       # CSV is now at LastDownload path and content is in LastResult

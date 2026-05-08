@@ -30,7 +30,25 @@ type Workflow struct {
 	Env              map[string]string `yaml:"env,omitempty"`
 	Viewport         *Viewport         `yaml:"viewport,omitempty"`
 	DebugScreenshots *bool             `yaml:"debug_screenshots,omitempty"` // default: true
-	Actions          map[string]Action `yaml:"actions"`
+	// Aliases declares short names for selector strings used across the
+	// workflow. Step selectors written as `${aliases.NAME}` are rewritten
+	// to the alias value at parse time. Inline aliases override anything
+	// loaded via AliasesFrom on key collision.
+	Aliases map[string]string `yaml:"aliases,omitempty"`
+	// AliasesFrom names external YAML files (each a flat name -> selector
+	// map) to load before the inline `aliases:` block. Files are merged in
+	// declaration order; later files override earlier on key collision and
+	// emit a warn-level lint signal. Supports `~`, absolute, and
+	// workflow-relative paths.
+	AliasesFrom []string          `yaml:"aliases_from,omitempty"`
+	Actions     map[string]Action `yaml:"actions"`
+
+	// resolvedAliases is the fully-merged + chain-resolved alias map,
+	// populated at parse time. Internal — exposed via ResolvedAliases().
+	resolvedAliases map[string]string `yaml:"-"`
+	// aliasOrigin records the source file of each alias for diagnostic
+	// messages. "<inline>" indicates the inline `aliases:` block.
+	aliasOrigin map[string]string `yaml:"-"`
 }
 
 // Action is a named sequence of steps with an optional starting URL.
@@ -135,8 +153,9 @@ type RetryStep struct {
 }
 
 type ClickStep struct {
-	Selector string `yaml:"selector"`
-	Text     string `yaml:"text,omitempty"` // match by visible text
+	Selector  string `yaml:"selector"`
+	AliasName string `yaml:"-"` // populated when Selector came from ${aliases.X}
+	Text      string `yaml:"text,omitempty"` // match by visible text
 	// Nth picks among multiple matches.
 	//
 	// Behavior preserved for backward compatibility:
@@ -153,21 +172,24 @@ type ClickStep struct {
 }
 
 type FillStep struct {
-	Selector string `yaml:"selector"`
-	Value    string `yaml:"value"`          // supports ${ENV_VAR} interpolation
-	Clear    bool   `yaml:"clear,omitempty"` // clear field before filling
+	Selector  string `yaml:"selector"`
+	AliasName string `yaml:"-"`
+	Value     string `yaml:"value"`           // supports ${ENV_VAR} interpolation
+	Clear     bool   `yaml:"clear,omitempty"` // clear field before filling
 }
 
 type SelectStep struct {
-	Selector string `yaml:"selector"`
-	Value    string `yaml:"value,omitempty"`   // option value to select (supports ${ENV_VAR})
-	Text     string `yaml:"text,omitempty"`    // match by visible text instead of value
-	Timeout  string `yaml:"timeout,omitempty"` // default 5s
+	Selector  string `yaml:"selector"`
+	AliasName string `yaml:"-"`
+	Value     string `yaml:"value,omitempty"`   // option value to select (supports ${ENV_VAR})
+	Text      string `yaml:"text,omitempty"`    // match by visible text instead of value
+	Timeout   string `yaml:"timeout,omitempty"` // default 5s
 }
 
 type UploadStep struct {
-	Selector string `yaml:"selector"`
-	Source   string `yaml:"source"` // "result" to use previous step's output, or a path
+	Selector  string `yaml:"selector"`
+	AliasName string `yaml:"-"`
+	Source    string `yaml:"source"` // "result" to use previous step's output, or a path
 }
 
 type DownloadStep struct {
@@ -187,10 +209,11 @@ type DownloadStep struct {
 }
 
 type WaitStep struct {
-	Selector string `yaml:"selector,omitempty"`
-	Text     string `yaml:"text,omitempty"`
-	State    string `yaml:"state,omitempty"` // visible, attached, hidden
-	Timeout  string `yaml:"timeout,omitempty"`
+	Selector  string `yaml:"selector,omitempty"`
+	AliasName string `yaml:"-"`
+	Text      string `yaml:"text,omitempty"`
+	State     string `yaml:"state,omitempty"` // visible, attached, hidden
+	Timeout   string `yaml:"timeout,omitempty"`
 }
 
 type WaitURLStep struct {

@@ -282,6 +282,24 @@ Use `${VAR_NAME}` in any string value. Resolution order:
 
 If a variable is not found, the `${VAR_NAME}` placeholder is left as-is (no crash).
 
+### Selector Aliases
+
+Centralize brittle selectors with a top-level `aliases:` map. Reference them from any step as `${aliases.NAME}`:
+
+```yaml
+name: example
+aliases:
+  cart_button: '#header .cart'
+  product_card: '.product-grid > .card'
+steps:
+  - click: { selector: '${aliases.cart_button}' }
+  - wait_visible: { selector: '${aliases.product_card}' }
+```
+
+When the site changes one selector that's used in eight places, you fix it in one alias instead of eight step lines. For shared libraries across workflows, use `aliases_from:` to load alias maps from external YAML files (`~`, absolute, or workflow-relative paths supported; later files override earlier; inline `aliases:` always wins). See `workflows/examples/csv-export-and-post.yaml` for a converted example.
+
+Undefined references error at parse time with a "did you mean" suggestion. Cycles in alias-of-alias chains are detected and rejected. Runtime errors include the alias name so you can trace which alias produced the bad selector.
+
 ### Click + Download Sequencing
 
 When a `click` step is immediately followed by a `download` step, brz automatically registers the download listener before the click executes. This is required by the Chrome DevTools Protocol. Always structure your workflow as:

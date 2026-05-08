@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -45,6 +46,10 @@ func Load(path string) (*Workflow, error) {
 		return nil, fmt.Errorf("workflow %s: no actions defined", path)
 	}
 
+	if _, err := resolveAliases(&w, filepath.Dir(path)); err != nil {
+		return nil, fmt.Errorf("workflow %s: %w", path, err)
+	}
+
 	return &w, nil
 }
 
@@ -60,6 +65,10 @@ func LoadFromBytes(data []byte) (*Workflow, error) {
 	}
 	if len(w.Actions) == 0 {
 		return nil, fmt.Errorf("workflow: no actions defined")
+	}
+
+	if _, err := resolveAliases(&w, ""); err != nil {
+		return nil, fmt.Errorf("parse workflow: %w", err)
 	}
 
 	return &w, nil
@@ -94,21 +103,42 @@ func LoadStrictFromBytes(data []byte) (*Workflow, error) {
 		return nil, fmt.Errorf("workflow: no actions defined")
 	}
 
+	if _, err := resolveAliases(&w, ""); err != nil {
+		return nil, fmt.Errorf("parse workflow: %w", err)
+	}
+
 	return &w, nil
 }
 
 // LoadStrict reads a YAML file and parses with KnownFields enforcement.
-// File-system equivalent of LoadStrictFromBytes.
+// File-system equivalent of LoadStrictFromBytes. Aliases are resolved
+// against the file's directory so workflow-relative `aliases_from`
+// paths work; LoadStrictFromBytes can't do that and is restricted to
+// absolute / `~` paths.
 func LoadStrict(path string) (*Workflow, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read workflow %s: %w", path, err)
 	}
-	w, err := LoadStrictFromBytes(data)
-	if err != nil {
+	// Mirror LoadStrictFromBytes but with a known workflowDir for alias
+	// path resolution. We can't simply call LoadStrictFromBytes because
+	// it has no way to learn the source directory.
+	var w Workflow
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(&w); err != nil {
+		return nil, fmt.Errorf("workflow %s: parse workflow: %w", path, decorateStrictError(err))
+	}
+	if w.Name == "" {
+		return nil, fmt.Errorf("workflow %s: missing 'name' field", path)
+	}
+	if len(w.Actions) == 0 {
+		return nil, fmt.Errorf("workflow %s: no actions defined", path)
+	}
+	if _, err := resolveAliases(&w, filepath.Dir(path)); err != nil {
 		return nil, fmt.Errorf("workflow %s: %w", path, err)
 	}
-	return w, nil
+	return &w, nil
 }
 
 // InterpolateEnv replaces ${VAR_NAME} patterns with environment variable values.
