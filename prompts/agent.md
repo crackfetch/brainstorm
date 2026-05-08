@@ -241,6 +241,7 @@ actions:
 | wait_text | `- wait_text: { text, timeout }` | Wait for text on page |
 | wait_url | `- wait_url: { match, timeout }` | Wait for URL to contain substring |
 | wait_enabled | `- wait_enabled: { selector, timeout }` | Wait for element to be enabled (no `disabled` attribute, no `aria-disabled="true"`). Common pattern: forms gated by anti-bot challenges keep the submit button disabled until verification — put `wait_enabled` between `fill` and `click` so brz blocks until the element is interactable instead of clicking a disabled button (which silently no-ops). |
+| handoff | `- handoff: { message, wait_url \| wait_eval, timeout }` | Pause the workflow for a human takeover. Switches the browser to headed mode (relaunching if currently headless and re-navigating to the URL the user was on), prints the message + current URL to stderr, then blocks until the resume signal fires: `wait_url` matches a substring of the URL, or `wait_eval` returns JS-truthy (the expression must be a function — `() => ...` or `function() { return ... }`; we wrap it in `Boolean(expr())` so 1 / "ready" / DOM-node returns all resume). Default timeout 10m. Set exactly one of `wait_url` / `wait_eval`. Use this instead of a long `wait_url` when you want the intent ("stop and let the human drive") to be explicit and the window to be guaranteed visible. |
 | screenshot | `- screenshot: "filename.png"` | Saves to temp directory |
 | sleep | `- sleep: { duration: "5s" }` | Go duration string |
 | eval | `- eval: "js expression"` | Supports `${ENV}`, runs in page context |

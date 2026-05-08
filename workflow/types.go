@@ -87,6 +87,14 @@ type Step struct {
 	// click so brz blocks until the element is ready instead of clicking a
 	// disabled button (which silently no-ops in most browsers).
 	WaitEnabled *WaitStep `yaml:"wait_enabled,omitempty"`
+	// Handoff pauses the workflow for a human takeover. Switches the
+	// browser to headed mode (relaunching if currently headless), prints
+	// the message to stderr, and blocks until the resume condition fires
+	// (URL match, JS eval truthy, or timeout). Distinct from a long
+	// wait_url because it: (a) ensures the window is actually visible
+	// before blocking, and (b) makes the "stop and let me drive" intent
+	// explicit in the YAML rather than buried in a 5-minute timeout.
+	Handoff *HandoffStep `yaml:"handoff,omitempty"`
 
 	// Utilities
 	Screenshot string     `yaml:"screenshot,omitempty"`
@@ -164,6 +172,35 @@ type WaitURLStep struct {
 
 type SleepStep struct {
 	Duration string `yaml:"duration"`
+}
+
+// HandoffStep pauses the workflow for a human, then resumes when one of
+// its signals fires.
+//
+// Exactly one resume signal must be set: WaitURL (URL contains substring)
+// or WaitEval (JS expression returns truthy). Setting neither errors at
+// step-execution time so the typo doesn't block the workflow forever.
+type HandoffStep struct {
+	// Message is printed to stderr when the handoff begins. Should tell
+	// the user what to do (solve the captcha, click 2FA, etc.).
+	Message string `yaml:"message,omitempty"`
+	// WaitURL: workflow resumes when the page URL contains this substring.
+	// Mirrors WaitURLStep's matcher.
+	WaitURL string `yaml:"wait_url,omitempty"`
+	// WaitEval: workflow resumes when this JS expression evaluates to
+	// truthy. Useful when the resume signal isn't a URL (e.g., a cookie
+	// is set, a DOM element appears, etc.). Polled at the same cadence
+	// as WaitURL.
+	//
+	// MUST be a function expression — `() => ...` arrow form or
+	// `function() { return ... }`. We wrap it in `Boolean((expr)())`
+	// at execution time so any JS-truthy return (1, "ready", a DOM
+	// node, etc.) resumes — not only strict-bool true.
+	WaitEval string `yaml:"wait_eval,omitempty"`
+	// Timeout caps the wait. Default 10 minutes — handoff is for human
+	// intervention, so the timeout has to be long enough for a person to
+	// act but short enough to not hang a workflow forever.
+	Timeout string `yaml:"timeout,omitempty"`
 }
 
 // ResolvedStep is a flat representation of a workflow step with all env vars

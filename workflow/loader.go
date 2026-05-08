@@ -192,6 +192,12 @@ func ResolveSteps(action Action, env map[string]string) []ResolvedStep {
 			rs.Type = "wait_enabled"
 			rs.Selector = step.WaitEnabled.Selector
 			rs.Timeout = step.WaitEnabled.Timeout
+		case step.Handoff != nil:
+			rs.Type = "handoff"
+			rs.Match = step.Handoff.WaitURL
+			rs.Expr = InterpolateEnv(step.Handoff.WaitEval, env)
+			rs.Text = step.Handoff.Message
+			rs.Timeout = step.Handoff.Timeout
 		case step.Screenshot != "":
 			rs.Type = "screenshot"
 			rs.Expr = step.Screenshot
