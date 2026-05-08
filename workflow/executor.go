@@ -336,6 +336,7 @@ func (e *Executor) Start() error {
 
 	if announce {
 		e.announceHeadedLaunch(pid, exe)
+		e.surfaceMacOSWindow(exe)
 	}
 	return err
 }
@@ -852,6 +853,7 @@ func (e *Executor) RunAction(name string) *ActionResult {
 				pid, exe := e.pendingAnnouncePID, e.pendingAnnounceExe
 				e.pendingAnnouncePID, e.pendingAnnounceExe, e.pendingAnnounceFlag = 0, "", false
 				e.announceHeadedLaunch(pid, exe)
+				e.surfaceMacOSWindow(exe)
 			}
 			// e.page is nil after restart — setupPage will create a fresh tab.
 			if errMsg := e.setupPage(action); errMsg != "" {
@@ -1502,6 +1504,65 @@ func (e *Executor) setViewport(vp Viewport) {
 		Height:            vp.Height,
 		DeviceScaleFactor: 1,
 	}.Call(e.page)
+}
+
+// extractMacOSBundleName returns the .app stem from a Chromium executable
+// path, or "" if the path doesn't sit inside an .app bundle.
+//
+//	"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"           → "Google Chrome"
+//	".../chromium-1208/.../Google Chrome for Testing.app/Contents/MacOS/..." → "Google Chrome for Testing"
+//	"/usr/bin/chromium"                                                      → ""
+//	""                                                                       → ""
+//
+// Pure string scan from the right, no syscalls — safe to call from any goroutine.
+func extractMacOSBundleName(exePath string) string {
+	if exePath == "" {
+		return ""
+	}
+	parts := strings.Split(exePath, string(filepath.Separator))
+	for i := len(parts) - 1; i >= 0; i-- {
+		if strings.HasSuffix(parts[i], ".app") {
+			return strings.TrimSuffix(parts[i], ".app")
+		}
+	}
+	return ""
+}
+
+// surfaceMacOSWindow asks macOS to bring the just-launched Chromium to the
+// foreground via osascript. Non-Darwin platforms and exe paths without a
+// .app bundle are silent no-ops. We bound osascript to a 2s timeout and
+// swallow every error: this is purely a UX nicety, never a blocker.
+//
+// Why this matters: when brz launches headed Chromium on macOS while the
+// user is doing anything else, the new window opens behind the foreground
+// app. Without this hint, manual_login flows time out at wait_url with the
+// user thinking nothing happened. Cheap activate solves it for the vast
+// majority of cases; users who explicitly hide it (Cmd+H) still have to
+// Cmd+Tab themselves, which the announcement line tells them to do.
+func (e *Executor) surfaceMacOSWindow(exePath string) {
+	if runtime.GOOS != "darwin" {
+		return
+	}
+	bundle := extractMacOSBundleName(exePath)
+	if bundle == "" {
+		return
+	}
+	cmd := exec.Command("osascript", "-e",
+		fmt.Sprintf(`tell application %q to activate`, bundle))
+	// Best-effort timeout: kill osascript after 2s if it hangs (rare, but
+	// possible if the user has an Accessibility prompt up).
+	done := make(chan struct{})
+	go func() {
+		select {
+		case <-time.After(2 * time.Second):
+			if cmd.Process != nil {
+				_ = cmd.Process.Kill()
+			}
+		case <-done:
+		}
+	}()
+	_ = cmd.Run()
+	close(done)
 }
 
 // announceHeadedLaunch writes a single stderr line whenever brz launches a
