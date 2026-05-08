@@ -1023,6 +1023,8 @@ func stepType(s Step) string {
 		return "wait_url"
 	case s.WaitEnabled != nil:
 		return "wait_enabled"
+	case s.Handoff != nil:
+		return "handoff"
 	case s.Screenshot != "":
 		return "screenshot"
 	case s.Sleep != nil:
@@ -1070,6 +1072,9 @@ func (e *Executor) executeStep(step Step) error {
 
 	case step.WaitEnabled != nil:
 		return e.doWaitEnabled(step.WaitEnabled)
+
+	case step.Handoff != nil:
+		return e.doHandoff(step.Handoff)
 
 	case step.Screenshot != "":
 		e.takeScreenshot(step.Screenshot)
@@ -1499,6 +1504,132 @@ func (e *Executor) doWaitEnabled(w *WaitStep) error {
 		}
 		if time.Now().After(deadline) {
 			return fmt.Errorf("element %q did not become enabled within %s", w.Selector, timeout)
+		}
+		time.Sleep(pollInterval)
+	}
+}
+
+// doHandoff pauses the workflow for a human. Ensures the browser is
+// headed (relaunching if currently headless via the existing restart()
+// machinery), prints the message + current URL to stderr, then polls
+// for the resume signal until either it fires or the timeout elapses.
+//
+// The handoff timeout defaults to 10 minutes — long enough for a person
+// to solve a captcha or click through a 2FA flow, short enough to not
+// silently hang an automated pipeline forever. The 1s poll cadence is
+// the same as wait_url; faster wouldn't help and would burn CPU.
+//
+// We assume the caller of RunAction holds e.mu (it does — see RunAction
+// at the public entry). restart() and announceHeadedLaunch are both
+// safe to invoke under that lock with the production os.Stderr writer.
+func (e *Executor) doHandoff(h *HandoffStep) error {
+	if h.WaitURL == "" && h.WaitEval == "" {
+		return fmt.Errorf("handoff requires either wait_url or wait_eval (set neither — workflow would hang)")
+	}
+	if h.WaitURL != "" && h.WaitEval != "" {
+		return fmt.Errorf("handoff: set wait_url OR wait_eval, not both")
+	}
+
+	timeout := 10 * time.Minute
+	if h.Timeout != "" {
+		timeout = ParseTimeout(h.Timeout)
+	}
+
+	// Ensure headed. If we're currently headless, capture the current
+	// URL FIRST (so we can re-navigate to it after the relaunch),
+	// then restart the browser. closeLocked + startLocked replace the
+	// rod browser handle entirely, so the existing e.page becomes a
+	// stale reference into a closed Chromium — we must rehydrate it via
+	// setupPage with the captured URL, not reuse the handle.
+	if !e.headed {
+		var preRestartURL string
+		if e.page != nil {
+			if info, ierr := e.page.Info(); ierr == nil {
+				preRestartURL = info.URL
+			}
+		}
+		if err := e.restart(true); err != nil {
+			return fmt.Errorf("handoff: failed to escalate to headed mode: %w", err)
+		}
+		// restart's startLocked stashed the announce; flush it now so
+		// the user sees the same launch line they'd get from a normal
+		// headed Start. We hold e.mu — production os.Stderr write is
+		// non-blocking; tests inject only synchronous buffers.
+		if e.pendingAnnounceFlag {
+			pid, exe := e.pendingAnnouncePID, e.pendingAnnounceExe
+			e.pendingAnnouncePID, e.pendingAnnounceExe, e.pendingAnnounceFlag = 0, "", false
+			e.announceHeadedLaunch(pid, exe)
+			e.surfaceMacOSWindow(exe)
+		}
+		// CRITICAL: e.page is now a stale handle pointing at the
+		// closed-headless browser. The previous version of this code
+		// called setupPage(Action{}) which "reused" that stale handle
+		// and the subsequent Info()/Eval() polls in the resume loop
+		// silently failed. Re-navigate to the URL we were on (or
+		// about:blank as a safe fallback) via setupPage with an
+		// explicit URL so the page handle is replaced.
+		restoreURL := preRestartURL
+		if restoreURL == "" || restoreURL == "about:blank" {
+			restoreURL = "about:blank"
+		}
+		// Force-nil the stale page handle so setupPage recreates rather
+		// than reuses. setupPage's "URL matches current page" fast-path
+		// would otherwise see the stale URL on the dead handle.
+		e.page = nil
+		if errMsg := e.setupPage(Action{URL: restoreURL, ForceNavigate: true}); errMsg != "" {
+			return fmt.Errorf("handoff: failed to set up page after relaunch: %s", errMsg)
+		}
+	}
+
+	// Print the handoff banner. stderr because stdout is reserved for
+	// JSON output / structured tool consumption.
+	currentURL := ""
+	if info, err := e.page.Info(); err == nil {
+		currentURL = info.URL
+	}
+	msg := h.Message
+	if msg == "" {
+		msg = "Workflow paused for human takeover."
+	}
+	fmt.Fprintf(os.Stderr, "[brz] HANDOFF: %s\n", msg)
+	if currentURL != "" {
+		fmt.Fprintf(os.Stderr, "[brz] HANDOFF: current page = %s\n", currentURL)
+	}
+	if h.WaitURL != "" {
+		fmt.Fprintf(os.Stderr, "[brz] HANDOFF: workflow will resume when URL contains %q (timeout %s)\n", h.WaitURL, timeout)
+	} else {
+		fmt.Fprintf(os.Stderr, "[brz] HANDOFF: workflow will resume when JS eval returns truthy (timeout %s)\n", timeout)
+	}
+
+	deadline := time.Now().Add(timeout)
+	pollInterval := 1 * time.Second
+	for {
+		if h.WaitURL != "" {
+			info, err := e.page.Info()
+			if err == nil && strings.Contains(info.URL, h.WaitURL) {
+				fmt.Fprintln(os.Stderr, "[brz] HANDOFF: resumed (URL matched)")
+				return nil
+			}
+		} else {
+			// WaitEval must be a JS function expression (e.g.
+			// `() => document.cookie.includes('session=')`). We wrap it
+			// in `Boolean((${expr})())` so JS-truthy values like 1,
+			// "done", or DOM nodes resume the workflow — not just
+			// strict-bool true. rod's res.Value.Bool() interprets
+			// JSON-true reliably; the wrap guarantees the inner JS
+			// always returns one of true/false.
+			wrapped := "() => Boolean((" + h.WaitEval + ")())"
+			res, err := e.page.Eval(wrapped)
+			if err == nil && res.Value.Bool() {
+				fmt.Fprintln(os.Stderr, "[brz] HANDOFF: resumed (eval matched)")
+				return nil
+			}
+		}
+		if time.Now().After(deadline) {
+			if h.WaitURL != "" {
+				return fmt.Errorf("handoff: URL did not match %q within %s", h.WaitURL, timeout)
+			}
+			return fmt.Errorf("handoff: eval did not return truthy within %s", timeout)
 		}
 		time.Sleep(pollInterval)
 	}
