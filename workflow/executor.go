@@ -120,6 +120,11 @@ type Executor struct {
 	// Default is events.Nop, so unset emitters cost a single inlinable method
 	// call. Set via WithEventEmitter. Never nil after NewExecutor.
 	events events.Emitter
+
+	// observer, when non-nil, receives a callback per executed step. Used
+	// by site-drift detection to record selector hits / text hashes. Its
+	// hooks must not block — see workflow/observer.go for the contract.
+	observer StepObserver
 }
 
 // NewExecutor creates an executor with browser configuration.
@@ -1042,7 +1047,14 @@ func (e *Executor) runSteps(name string, action Action) *ActionResult {
 			beforeData = e.captureJPEG()
 		}
 
-		if err := e.executeStepWithRetry(name, step, i+1); err != nil {
+		stepErr := e.executeStepWithRetry(name, step, i+1)
+		// Notify the optional observer regardless of step outcome — drift
+		// detection wants to record matched_count even on failed steps so
+		// "0 matches today (was 12)" surfaces rather than being swallowed.
+		if e.observer != nil {
+			e.observer.OnStep(i, step, stepType(step), stepErr == nil, e.page)
+		}
+		if err := stepErr; err != nil {
 			if step.Optional {
 				if e.debug {
 					log.Printf("[%s] optional step %d failed (non-fatal): %v", name, i+1, err)

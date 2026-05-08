@@ -162,6 +162,8 @@ func StepSelector(step Step) string {
 		return step.WaitVisible.Selector
 	case step.WaitEnabled != nil:
 		return step.WaitEnabled.Selector
+	case step.Upload != nil:
+		return step.Upload.Selector
 	default:
 		return ""
 	}
