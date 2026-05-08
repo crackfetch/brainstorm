@@ -6,6 +6,12 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 - `brz run --events=jsonl` streams structured JSONL lifecycle events on stdout (one JSON object per line) so an external orchestrator can react to a workflow as it runs. Stdout becomes pure JSONL — human/log output and the final result line move to stderr. Events: `workflow_start`, `action_start`, `step_start`, `retry_attempt`, `download_started`, `download_completed`, `screenshot_captured`, `step_end` (status `ok` / `error` / `skipped`), `action_end`, `workflow_end`. Required keys per record: `ts` (RFC3339Nano UTC), `seq` (monotonic from 1), `event`. Default behavior with no flag is unchanged. New `internal/events` package with a `JSONL` emitter (lock-protected seq + write so on-wire order matches seq order) and a `Nop` default for zero-overhead callers.
+- Selector aliases. New top-level `aliases:` map binds short names to selector strings; reference them from any step as `${aliases.NAME}`. When a site changes one selector used in N places, the user fixes one alias instead of N step lines.
+- `aliases_from:` directive loads aliases from external YAML files (each a flat `name: selector` map). Supports `~`, absolute, and workflow-relative paths. Files merge in declaration order; later files override earlier on key collision and emit a warn-level signal. Inline `aliases:` always overrides anything from `aliases_from:`.
+- Alias-of-alias chains resolve transitively; cycles are detected at parse time with a clear error (no stack overflow).
+- Undefined alias references parse-error with the defined-alias list and a Levenshtein-based "did you mean" suggestion.
+- Runtime errors that fail to find an aliased selector now include the alias name (and source file when external) — e.g. `find element ".foo" (alias cart_button from selectors/local.yaml): ...`.
+- Path resolution for `aliases_from:` rejects symlinks that escape `$HOME` to prevent a workflow tricking brz into reading arbitrary files via a user-controlled selectors directory.
 
 ### Fixed
 - `launchForLogin` now uses `--remote-debugging-port=0` so the OS assigns a free port, eliminating collisions with other Chrome instances that happen to hold port 9222.
