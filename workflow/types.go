@@ -35,12 +35,23 @@ type Workflow struct {
 
 // Action is a named sequence of steps with an optional starting URL.
 type Action struct {
-	URL            string       `yaml:"url,omitempty"`
-	ForceNavigate  bool         `yaml:"force_navigate,omitempty"` // navigate even if URL matches current page
-	Headed         bool         `yaml:"headed,omitempty"`         // show browser window (used by BRZ_HEADED=auto)
-	Viewport       *Viewport    `yaml:"viewport,omitempty"`       // override workflow-level viewport
-	Steps          []Step       `yaml:"steps"`
-	Eval           []EvalAssert `yaml:"eval,omitempty"`           // post-action assertions
+	URL           string       `yaml:"url,omitempty"`
+	ForceNavigate bool         `yaml:"force_navigate,omitempty"` // navigate even if URL matches current page
+	Headed        bool         `yaml:"headed,omitempty"`         // show browser window (used by BRZ_HEADED=auto)
+	Viewport      *Viewport    `yaml:"viewport,omitempty"`       // override workflow-level viewport
+	Steps         []Step       `yaml:"steps"`
+	Eval          []EvalAssert `yaml:"eval,omitempty"`           // post-action assertions
+	// OnError names another action that runs as a recovery if THIS
+	// action fails terminally (after auto-escalation, after step
+	// retries, after the workflow's normal error path). The recovery
+	// action's result replaces the failure: if recovery succeeds, the
+	// original failure is reported as recovered; if recovery itself
+	// fails, both errors are surfaced.
+	//
+	// Common pattern: relogin-and-redirect, clear-cache-and-retry,
+	// reset-modal-state. Keep recovery actions short — they're a
+	// safety net, not a place for the real workflow logic.
+	OnError string `yaml:"on_error,omitempty"`
 }
 
 // EvalAssert is a single post-action assertion. Exactly one field should be set.
@@ -87,6 +98,14 @@ type Step struct {
 	// click so brz blocks until the element is ready instead of clicking a
 	// disabled button (which silently no-ops in most browsers).
 	WaitEnabled *WaitStep `yaml:"wait_enabled,omitempty"`
+	// Handoff pauses the workflow for a human takeover. Switches the
+	// browser to headed mode (relaunching if currently headless), prints
+	// the message to stderr, and blocks until the resume condition fires
+	// (URL match, JS eval truthy, or timeout). Distinct from a long
+	// wait_url because it: (a) ensures the window is actually visible
+	// before blocking, and (b) makes the "stop and let me drive" intent
+	// explicit in the YAML rather than buried in a 5-minute timeout.
+	Handoff *HandoffStep `yaml:"handoff,omitempty"`
 
 	// Utilities
 	Screenshot string     `yaml:"screenshot,omitempty"`
@@ -94,8 +113,25 @@ type Step struct {
 	Eval       string     `yaml:"eval,omitempty"`
 
 	// Control flow
-	Label    string `yaml:"label,omitempty"`    // human-readable step description for logging
-	Optional bool   `yaml:"optional,omitempty"` // if true, step failure is non-fatal
+	Label    string     `yaml:"label,omitempty"`    // human-readable step description for logging
+	Optional bool       `yaml:"optional,omitempty"` // if true, step failure is non-fatal
+	Retry    *RetryStep `yaml:"retry,omitempty"`    // retry the step on failure (count + backoff)
+}
+
+// RetryStep configures per-step retry-on-failure. Applies to the same
+// step it accompanies — count=3 means up to 3 total attempts (1 initial
+// + 2 retries). Backoff "none" sleeps 0; "linear" sleeps N*initial_delay
+// before attempt N+1; "exponential" sleeps initial_delay * 2^N.
+//
+// Scope: useful for flaky network-bound steps (click on a slow-loading
+// button, wait_url, wait_visible, eval). The click+download pair has a
+// look-ahead that pre-registers the download before the click; retrying
+// just the click would re-trigger the download flow inconsistently —
+// for that case use action-level on_error instead.
+type RetryStep struct {
+	Count        int    `yaml:"count,omitempty"`         // total attempts (default 1; values <2 disable retry)
+	Backoff      string `yaml:"backoff,omitempty"`       // "none" (default), "linear", "exponential"
+	InitialDelay string `yaml:"initial_delay,omitempty"` // base delay for backoff math; default 1s
 }
 
 type ClickStep struct {
@@ -164,6 +200,35 @@ type WaitURLStep struct {
 
 type SleepStep struct {
 	Duration string `yaml:"duration"`
+}
+
+// HandoffStep pauses the workflow for a human, then resumes when one of
+// its signals fires.
+//
+// Exactly one resume signal must be set: WaitURL (URL contains substring)
+// or WaitEval (JS expression returns truthy). Setting neither errors at
+// step-execution time so the typo doesn't block the workflow forever.
+type HandoffStep struct {
+	// Message is printed to stderr when the handoff begins. Should tell
+	// the user what to do (solve the captcha, click 2FA, etc.).
+	Message string `yaml:"message,omitempty"`
+	// WaitURL: workflow resumes when the page URL contains this substring.
+	// Mirrors WaitURLStep's matcher.
+	WaitURL string `yaml:"wait_url,omitempty"`
+	// WaitEval: workflow resumes when this JS expression evaluates to
+	// truthy. Useful when the resume signal isn't a URL (e.g., a cookie
+	// is set, a DOM element appears, etc.). Polled at the same cadence
+	// as WaitURL.
+	//
+	// MUST be a function expression — `() => ...` arrow form or
+	// `function() { return ... }`. We wrap it in `Boolean((expr)())`
+	// at execution time so any JS-truthy return (1, "ready", a DOM
+	// node, etc.) resumes — not only strict-bool true.
+	WaitEval string `yaml:"wait_eval,omitempty"`
+	// Timeout caps the wait. Default 10 minutes — handoff is for human
+	// intervention, so the timeout has to be long enough for a person to
+	// act but short enough to not hang a workflow forever.
+	Timeout string `yaml:"timeout,omitempty"`
 }
 
 // ResolvedStep is a flat representation of a workflow step with all env vars

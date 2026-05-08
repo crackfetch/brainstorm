@@ -810,9 +810,20 @@ func (e *Executor) setupPage(action Action) string {
 
 // RunAction executes a named action from the workflow.
 // Returns a structured ActionResult suitable for JSON serialization.
+// RunAction is the public entry: locks e.mu, then dispatches to the
+// internal runActionLocked. The internal form lets on_error recovery
+// invoke another action without re-acquiring the lock (which would
+// deadlock since we don't release between primary and recovery).
 func (e *Executor) RunAction(name string) *ActionResult {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	return e.runActionLocked(name, 0)
+}
+
+// runActionLocked is the internal action runner. depth tracks recursion
+// from on_error so we can refuse infinitely-chained recoveries.
+func (e *Executor) runActionLocked(name string, depth int) *ActionResult {
+	const maxOnErrorDepth = 1
 	start := time.Now()
 	action, ok := e.workflow.Actions[name]
 	if !ok {
@@ -843,7 +854,7 @@ func (e *Executor) RunAction(name string) *ActionResult {
 			if err := e.restart(true); err != nil {
 				failResult.Error += fmt.Sprintf("; headed escalation failed: %v", err)
 				failResult.DurationMs = time.Since(start).Milliseconds()
-				return failResult
+				return e.maybeRunOnError(name, action, failResult, depth)
 			}
 			// Surface the headed-launch announcement that restart's startLocked
 			// stashed. We hold e.mu here; the announce writes to os.Stderr by
@@ -859,20 +870,21 @@ func (e *Executor) RunAction(name string) *ActionResult {
 			if errMsg := e.setupPage(action); errMsg != "" {
 				failResult.Error += fmt.Sprintf("; headed setup failed: %s", errMsg)
 				failResult.DurationMs = time.Since(start).Milliseconds()
-				return failResult
+				return e.maybeRunOnError(name, action, failResult, depth)
 			}
 			// Retry all steps in headed mode.
 			if retryResult := e.runSteps(name, action); retryResult != nil {
 				retryResult.Escalated = true
 				retryResult.DurationMs = time.Since(start).Milliseconds()
-				return retryResult
+				return e.maybeRunOnError(name, action, retryResult, depth)
 			}
 			escalated = true
 		} else {
 			failResult.DurationMs = time.Since(start).Milliseconds()
-			return failResult
+			return e.maybeRunOnError(name, action, failResult, depth)
 		}
 	}
+	_ = maxOnErrorDepth // const referenced via maybeRunOnError; keeps it visible at call-site
 
 	// Build success result.
 	result := &ActionResult{
@@ -901,6 +913,11 @@ func (e *Executor) RunAction(name string) *ActionResult {
 			result.OK = false
 			result.Error = fmt.Sprintf("%d of %d eval assertions failed", evalResult.Failed, evalResult.Passed+evalResult.Failed)
 			result.PageURL, result.PageHTML = e.capturePageState()
+			// Eval-assertion failure is a terminal action failure, so
+			// the on_error recovery hook fires here too. Without this,
+			// post-action assertions could veto a step-success-only
+			// outcome and skip the recovery the user configured.
+			return e.maybeRunOnError(name, action, result, depth)
 		}
 	}
 
@@ -946,7 +963,7 @@ func (e *Executor) runSteps(name string, action Action) *ActionResult {
 			beforeData = e.captureJPEG()
 		}
 
-		if err := e.executeStep(step); err != nil {
+		if err := e.executeStepWithRetry(name, step, i+1); err != nil {
 			if step.Optional {
 				if e.debug {
 					log.Printf("[%s] optional step %d failed (non-fatal): %v", name, i+1, err)
@@ -1000,6 +1017,136 @@ func (e *Executor) runSteps(name string, action Action) *ActionResult {
 	return nil
 }
 
+// maybeRunOnError is the terminal-failure recovery hook. When action.OnError
+// names another action and we haven't already exceeded the recovery-chain
+// depth, run the recovery via runActionLocked under the existing e.mu.
+//
+// Results:
+//   - No on_error set: failResult passes through unchanged.
+//   - Recovery action missing: append a clear error, return failResult.
+//   - Recovery succeeds: original failResult.OK stays false, but Error gets
+//     a "; on_error 'X' recovery succeeded" suffix so consumers see the
+//     recovery ran. ok stays false because the originally-requested action
+//     did fail; cleanup-worked doesn't change that fact.
+//   - Recovery itself fails: append the recovery's error to the original.
+//   - Depth check: at most 1 level of on_error chaining. Recovery actions
+//     can't have their own on_error (would silently mask deeper failures
+//     and risk infinite recursion).
+func (e *Executor) maybeRunOnError(name string, action Action, failResult *ActionResult, depth int) *ActionResult {
+	const maxOnErrorDepth = 1
+
+	// Clear any stale pre-registered WaitDownload from the failed
+	// primary. If we don't, a recovery action that itself runs a
+	// click+download would (a) not get a fresh look-ahead registration
+	// because the next-step-is-download check already fired, AND (b)
+	// could observe the stale wait in doDownload's pre-registered path,
+	// confusing the file routing. Cheapest fix: nil it here so any
+	// subsequent action starts from a clean slate.
+	e.pendingDownloadWait = nil
+	e.pendingDownloadDir = ""
+	e.pendingDownloadURL = ""
+
+	if action.OnError == "" {
+		return failResult
+	}
+	if depth >= maxOnErrorDepth {
+		failResult.Error += fmt.Sprintf("; on_error chain limit hit at depth %d (recovery actions cannot themselves declare on_error)", depth)
+		return failResult
+	}
+	if _, ok := e.workflow.Actions[action.OnError]; !ok {
+		failResult.Error += fmt.Sprintf("; on_error action %q not found in workflow", action.OnError)
+		return failResult
+	}
+	if e.debug {
+		log.Printf("[%s] running on_error recovery: %s", name, action.OnError)
+	}
+	recoveryResult := e.runActionLocked(action.OnError, depth+1)
+	if recoveryResult == nil {
+		// Defensive: runActionLocked is documented to always return non-nil.
+		// If something changes, fall back to the original failure unmodified.
+		return failResult
+	}
+	if recoveryResult.OK {
+		failResult.Error += fmt.Sprintf("; on_error '%s' recovery succeeded", action.OnError)
+	} else {
+		failResult.Error += fmt.Sprintf("; on_error '%s' also failed: %s", action.OnError, recoveryResult.Error)
+	}
+	return failResult
+}
+
+// executeStepWithRetry runs a step, optionally retrying on failure when
+// step.Retry is configured. Retry attempts run AFTER the initial attempt,
+// so retry.count = 3 means 1 initial + 2 retries = 3 total attempts.
+//
+// Backoff strategies:
+//   "" / "none"     no delay between attempts
+//   "linear"        attempt N waits initial * N
+//   "exponential"   attempt N waits initial * 2^N
+//
+// Notes on retry + downloads: the click+download look-ahead pre-registers
+// WaitDownload before the click step. Retrying the click is safe — the
+// pre-registration persists across attempts (we only consume it when
+// doDownload runs). Retry on a download step itself is effectively a
+// no-op since the triggering click already fired; use action-level
+// on_error for recovery in that case.
+func (e *Executor) executeStepWithRetry(actionName string, step Step, stepNum int) error {
+	err := e.executeStep(step)
+	if err == nil {
+		return nil
+	}
+	if step.Retry == nil || step.Retry.Count <= 1 {
+		return err
+	}
+
+	initial := 1 * time.Second
+	if step.Retry.InitialDelay != "" {
+		initial = ParseTimeout(step.Retry.InitialDelay)
+	}
+
+	for attempt := 1; attempt < step.Retry.Count; attempt++ {
+		delay := computeBackoff(step.Retry.Backoff, initial, attempt)
+		if delay > 0 {
+			time.Sleep(delay)
+		}
+		if e.debug {
+			log.Printf("[%s] retry step %d attempt %d/%d (waited %s, last err: %v)",
+				actionName, stepNum, attempt+1, step.Retry.Count, delay, err)
+		}
+		err = e.executeStep(step)
+		if err == nil {
+			if e.debug {
+				log.Printf("[%s] retry step %d succeeded on attempt %d", actionName, stepNum, attempt+1)
+			}
+			return nil
+		}
+	}
+	return fmt.Errorf("step failed after %d attempts: %w", step.Retry.Count, err)
+}
+
+// computeBackoff returns the delay before retry attempt N (1-indexed).
+// "linear" with attempt=1 returns initial; with attempt=2 returns 2*initial.
+// "exponential" with attempt=1 returns 2*initial; with attempt=2 returns 4*initial.
+// (Both grow from "initial" at attempt 1, not 0 — the previous attempt
+// just failed, so we always wait at least once.)
+func computeBackoff(strategy string, initial time.Duration, attempt int) time.Duration {
+	if attempt < 1 {
+		return 0
+	}
+	switch strategy {
+	case "linear":
+		return initial * time.Duration(attempt)
+	case "exponential":
+		return initial * time.Duration(1<<attempt)
+	case "", "none":
+		return 0
+	default:
+		// Unknown strategy: fall back to linear so a typo doesn't surface
+		// as "all retries fired instantly without backoff." Document the
+		// supported values; any unknown one is treated as linear.
+		return initial * time.Duration(attempt)
+	}
+}
+
 // stepType returns the type name of a step for error reporting.
 func stepType(s Step) string {
 	switch {
@@ -1023,6 +1170,8 @@ func stepType(s Step) string {
 		return "wait_url"
 	case s.WaitEnabled != nil:
 		return "wait_enabled"
+	case s.Handoff != nil:
+		return "handoff"
 	case s.Screenshot != "":
 		return "screenshot"
 	case s.Sleep != nil:
@@ -1070,6 +1219,9 @@ func (e *Executor) executeStep(step Step) error {
 
 	case step.WaitEnabled != nil:
 		return e.doWaitEnabled(step.WaitEnabled)
+
+	case step.Handoff != nil:
+		return e.doHandoff(step.Handoff)
 
 	case step.Screenshot != "":
 		e.takeScreenshot(step.Screenshot)
@@ -1341,8 +1493,27 @@ func (e *Executor) doDownload(d *DownloadStep) error {
 		wait = e.browser.WaitDownload(downloadDir)
 	}
 
-	// Block until download finishes
-	info := wait()
+	// Honor d.Timeout. rod's WaitDownload returns a func that blocks
+	// indefinitely; without bounding it here, a click that didn't
+	// actually trigger a download would hang the executor forever
+	// (no retry, no cancel, no recovery). Default 60s matches a sane
+	// upper bound for most real download flows.
+	timeout := 60 * time.Second
+	if d.Timeout != "" {
+		timeout = ParseTimeout(d.Timeout)
+	}
+
+	type waitOut struct{ info *proto.PageDownloadWillBegin }
+	resCh := make(chan waitOut, 1)
+	go func() { resCh <- waitOut{info: wait()} }()
+
+	var info *proto.PageDownloadWillBegin
+	select {
+	case r := <-resCh:
+		info = r.info
+	case <-time.After(timeout):
+		return fmt.Errorf("download timed out after %s (no file received)", timeout)
+	}
 
 	if info == nil {
 		return fmt.Errorf("download failed: no download info received")
@@ -1499,6 +1670,132 @@ func (e *Executor) doWaitEnabled(w *WaitStep) error {
 		}
 		if time.Now().After(deadline) {
 			return fmt.Errorf("element %q did not become enabled within %s", w.Selector, timeout)
+		}
+		time.Sleep(pollInterval)
+	}
+}
+
+// doHandoff pauses the workflow for a human. Ensures the browser is
+// headed (relaunching if currently headless via the existing restart()
+// machinery), prints the message + current URL to stderr, then polls
+// for the resume signal until either it fires or the timeout elapses.
+//
+// The handoff timeout defaults to 10 minutes — long enough for a person
+// to solve a captcha or click through a 2FA flow, short enough to not
+// silently hang an automated pipeline forever. The 1s poll cadence is
+// the same as wait_url; faster wouldn't help and would burn CPU.
+//
+// We assume the caller of RunAction holds e.mu (it does — see RunAction
+// at the public entry). restart() and announceHeadedLaunch are both
+// safe to invoke under that lock with the production os.Stderr writer.
+func (e *Executor) doHandoff(h *HandoffStep) error {
+	if h.WaitURL == "" && h.WaitEval == "" {
+		return fmt.Errorf("handoff requires either wait_url or wait_eval (set neither — workflow would hang)")
+	}
+	if h.WaitURL != "" && h.WaitEval != "" {
+		return fmt.Errorf("handoff: set wait_url OR wait_eval, not both")
+	}
+
+	timeout := 10 * time.Minute
+	if h.Timeout != "" {
+		timeout = ParseTimeout(h.Timeout)
+	}
+
+	// Ensure headed. If we're currently headless, capture the current
+	// URL FIRST (so we can re-navigate to it after the relaunch),
+	// then restart the browser. closeLocked + startLocked replace the
+	// rod browser handle entirely, so the existing e.page becomes a
+	// stale reference into a closed Chromium — we must rehydrate it via
+	// setupPage with the captured URL, not reuse the handle.
+	if !e.headed {
+		var preRestartURL string
+		if e.page != nil {
+			if info, ierr := e.page.Info(); ierr == nil {
+				preRestartURL = info.URL
+			}
+		}
+		if err := e.restart(true); err != nil {
+			return fmt.Errorf("handoff: failed to escalate to headed mode: %w", err)
+		}
+		// restart's startLocked stashed the announce; flush it now so
+		// the user sees the same launch line they'd get from a normal
+		// headed Start. We hold e.mu — production os.Stderr write is
+		// non-blocking; tests inject only synchronous buffers.
+		if e.pendingAnnounceFlag {
+			pid, exe := e.pendingAnnouncePID, e.pendingAnnounceExe
+			e.pendingAnnouncePID, e.pendingAnnounceExe, e.pendingAnnounceFlag = 0, "", false
+			e.announceHeadedLaunch(pid, exe)
+			e.surfaceMacOSWindow(exe)
+		}
+		// CRITICAL: e.page is now a stale handle pointing at the
+		// closed-headless browser. The previous version of this code
+		// called setupPage(Action{}) which "reused" that stale handle
+		// and the subsequent Info()/Eval() polls in the resume loop
+		// silently failed. Re-navigate to the URL we were on (or
+		// about:blank as a safe fallback) via setupPage with an
+		// explicit URL so the page handle is replaced.
+		restoreURL := preRestartURL
+		if restoreURL == "" || restoreURL == "about:blank" {
+			restoreURL = "about:blank"
+		}
+		// Force-nil the stale page handle so setupPage recreates rather
+		// than reuses. setupPage's "URL matches current page" fast-path
+		// would otherwise see the stale URL on the dead handle.
+		e.page = nil
+		if errMsg := e.setupPage(Action{URL: restoreURL, ForceNavigate: true}); errMsg != "" {
+			return fmt.Errorf("handoff: failed to set up page after relaunch: %s", errMsg)
+		}
+	}
+
+	// Print the handoff banner. stderr because stdout is reserved for
+	// JSON output / structured tool consumption.
+	currentURL := ""
+	if info, err := e.page.Info(); err == nil {
+		currentURL = info.URL
+	}
+	msg := h.Message
+	if msg == "" {
+		msg = "Workflow paused for human takeover."
+	}
+	fmt.Fprintf(os.Stderr, "[brz] HANDOFF: %s\n", msg)
+	if currentURL != "" {
+		fmt.Fprintf(os.Stderr, "[brz] HANDOFF: current page = %s\n", currentURL)
+	}
+	if h.WaitURL != "" {
+		fmt.Fprintf(os.Stderr, "[brz] HANDOFF: workflow will resume when URL contains %q (timeout %s)\n", h.WaitURL, timeout)
+	} else {
+		fmt.Fprintf(os.Stderr, "[brz] HANDOFF: workflow will resume when JS eval returns truthy (timeout %s)\n", timeout)
+	}
+
+	deadline := time.Now().Add(timeout)
+	pollInterval := 1 * time.Second
+	for {
+		if h.WaitURL != "" {
+			info, err := e.page.Info()
+			if err == nil && strings.Contains(info.URL, h.WaitURL) {
+				fmt.Fprintln(os.Stderr, "[brz] HANDOFF: resumed (URL matched)")
+				return nil
+			}
+		} else {
+			// WaitEval must be a JS function expression (e.g.
+			// `() => document.cookie.includes('session=')`). We wrap it
+			// in `Boolean((${expr})())` so JS-truthy values like 1,
+			// "done", or DOM nodes resume the workflow — not just
+			// strict-bool true. rod's res.Value.Bool() interprets
+			// JSON-true reliably; the wrap guarantees the inner JS
+			// always returns one of true/false.
+			wrapped := "() => Boolean((" + h.WaitEval + ")())"
+			res, err := e.page.Eval(wrapped)
+			if err == nil && res.Value.Bool() {
+				fmt.Fprintln(os.Stderr, "[brz] HANDOFF: resumed (eval matched)")
+				return nil
+			}
+		}
+		if time.Now().After(deadline) {
+			if h.WaitURL != "" {
+				return fmt.Errorf("handoff: URL did not match %q within %s", h.WaitURL, timeout)
+			}
+			return fmt.Errorf("handoff: eval did not return truthy within %s", timeout)
 		}
 		time.Sleep(pollInterval)
 	}

@@ -241,11 +241,43 @@ actions:
 | wait_text | `- wait_text: { text, timeout }` | Wait for text on page |
 | wait_url | `- wait_url: { match, timeout }` | Wait for URL to contain substring |
 | wait_enabled | `- wait_enabled: { selector, timeout }` | Wait for element to be enabled (no `disabled` attribute, no `aria-disabled="true"`). Common pattern: forms gated by anti-bot challenges keep the submit button disabled until verification — put `wait_enabled` between `fill` and `click` so brz blocks until the element is interactable instead of clicking a disabled button (which silently no-ops). |
+| handoff | `- handoff: { message, wait_url \| wait_eval, timeout }` | Pause the workflow for a human takeover. Switches the browser to headed mode (relaunching if currently headless and re-navigating to the URL the user was on), prints the message + current URL to stderr, then blocks until the resume signal fires: `wait_url` matches a substring of the URL, or `wait_eval` returns JS-truthy (the expression must be a function — `() => ...` or `function() { return ... }`; we wrap it in `Boolean(expr())` so 1 / "ready" / DOM-node returns all resume). Default timeout 10m. Set exactly one of `wait_url` / `wait_eval`. Use this instead of a long `wait_url` when you want the intent ("stop and let the human drive") to be explicit and the window to be guaranteed visible. |
 | screenshot | `- screenshot: "filename.png"` | Saves to temp directory |
 | sleep | `- sleep: { duration: "5s" }` | Go duration string |
 | eval | `- eval: "js expression"` | Supports `${ENV}`, runs in page context |
 
 Any step can include `label: "description"` for logging and `optional: true` to continue on failure.
+
+### Retry on flaky steps
+
+Any step can be retried by attaching a `retry:` block:
+
+```yaml
+- click:
+    selector: '.flaky-button'
+  retry:
+    count: 3                    # total attempts (1 initial + 2 retries)
+    backoff: exponential        # "none" (default), "linear", "exponential"
+    initial_delay: "1s"          # base for backoff math; default 1s
+```
+
+`backoff: linear` waits `initial * N` before retry N. `backoff: exponential` waits `initial * 2^N`. Useful for `click`, `fill`, `wait_visible`, `wait_url`, `eval` against flaky targets. Retrying a `download` step is a no-op since the triggering click already fired — use action-level `on_error` for that pattern.
+
+### Action-level recovery with on_error
+
+When an action fails terminally (after step retries, after auto-escalation), brz can run a named recovery action:
+
+```yaml
+actions:
+  primary:
+    on_error: cleanup_and_relogin
+    steps: [...]
+
+  cleanup_and_relogin:
+    steps: [...]
+```
+
+The recovery runs once. The original action still reports `ok: false` (the user-requested action did fail), but `error` carries `; on_error 'X' recovery succeeded` or `; on_error 'X' also failed: ...`. Recovery actions can't chain — `on_error` on a recovery is silently ignored at depth 1 to prevent infinite recovery loops.
 
 **Click + Download rule:** Always put `download` immediately after the `click` that triggers it. brz registers the download listener before executing the click.
 

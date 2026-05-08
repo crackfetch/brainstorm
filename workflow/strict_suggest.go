@@ -51,6 +51,8 @@ func buildFieldRegistry() map[string][]string {
 		WaitStep{},
 		WaitURLStep{},
 		SleepStep{},
+		HandoffStep{},
+		RetryStep{},
 	}
 	out := make(map[string][]string, len(types))
 	for _, v := range types {
