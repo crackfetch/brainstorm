@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- `brz run --events=jsonl` streams structured JSONL lifecycle events on stdout (one JSON object per line) so an external orchestrator can react to a workflow as it runs. Stdout becomes pure JSONL — human/log output and the final result line move to stderr. Events: `workflow_start`, `action_start`, `step_start`, `retry_attempt`, `download_started`, `download_completed`, `screenshot_captured`, `step_end` (status `ok` / `error` / `skipped`), `action_end`, `workflow_end`. Required keys per record: `ts` (RFC3339Nano UTC), `seq` (monotonic from 1), `event`. Default behavior with no flag is unchanged. New `internal/events` package with a `JSONL` emitter (lock-protected seq + write so on-wire order matches seq order) and a `Nop` default for zero-overhead callers.
+
 ### Fixed
 - `launchForLogin` now uses `--remote-debugging-port=0` so the OS assigns a free port, eliminating collisions with other Chrome instances that happen to hold port 9222.
 - Port is discovered from `<profileDir>/DevToolsActivePort` after Chrome starts (polled up to 5s). New `DebugPort()` getter exposes it to callers.

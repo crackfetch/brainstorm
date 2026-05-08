@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/crackfetch/brainstorm/internal/config"
+	"github.com/crackfetch/brainstorm/internal/events"
 	"github.com/crackfetch/brainstorm/prompts"
 	"github.com/crackfetch/brainstorm/workflow"
 	"golang.org/x/term"
@@ -171,6 +172,7 @@ func cmdRun(args []string) {
 	var envs envFlag
 	fs.Var(&envs, "env", "Set workflow env var (repeatable): --env KEY=VAL")
 	dryRun := fs.Bool("dry-run", false, "Show resolved steps without executing (no browser needed)")
+	eventsFlag := fs.String("events", "", "Emit structured event stream on stdout. Values: jsonl. Forces stdout to JSONL only; final result still prints last (also as JSON).")
 
 	fs.Usage = func() { printRunUsage() }
 	fs.Parse(args)
@@ -183,7 +185,22 @@ func cmdRun(args []string) {
 	workflowPath := fs.Arg(0)
 	actionArg := fs.Arg(1)
 	names := workflow.SplitActionNames(actionArg)
-	useJSON := bf.json || !term.IsTerminal(int(os.Stdout.Fd()))
+
+	// Validate --events early so a typo fails fast.
+	emitEvents := false
+	switch *eventsFlag {
+	case "":
+		// disabled
+	case "jsonl":
+		emitEvents = true
+	default:
+		fmt.Fprintf(os.Stderr, "ERROR: --events: unknown value %q (supported: jsonl)\n", *eventsFlag)
+		os.Exit(exitWorkflowError)
+	}
+
+	// In events mode stdout is reserved for JSONL — the final ActionResult
+	// would muddle the stream if printed as a human line, so we force JSON.
+	useJSON := bf.json || !term.IsTerminal(int(os.Stdout.Fd())) || emitEvents
 
 	if len(names) == 0 {
 		outputError(useJSON, exitWorkflowError, "no action name provided")
@@ -271,6 +288,14 @@ func cmdRun(args []string) {
 		opts = append(opts, workflow.WithProfileDir(cfg.ProfileDir))
 	}
 
+	// Build event emitter. JSONL writes to stdout; in events mode all human
+	// output is redirected to stderr. Default is events.Nop, zero overhead.
+	var emitter events.Emitter = events.Nop{}
+	if emitEvents {
+		emitter = events.NewJSONL(os.Stdout)
+	}
+	opts = append(opts, workflow.WithEventEmitter(emitter))
+
 	exec := workflow.NewExecutor(w, opts...)
 
 	// Inject --env flags into workflow env
@@ -278,21 +303,53 @@ func cmdRun(args []string) {
 		exec.SetEnv(k, v)
 	}
 
+	wfStart := time.Now()
+	if emitEvents {
+		emitter.Emit(events.Event{
+			Event:    events.WorkflowStart,
+			Workflow: w.Name,
+		})
+	}
+
 	if err := exec.Start(); err != nil {
+		if emitEvents {
+			// Bracket the stream so consumers see a workflow_end with the
+			// browser-launch failure rather than a half-open stream.
+			emitter.Emit(events.Event{
+				Event:      events.WorkflowEnd,
+				Workflow:   w.Name,
+				Status:     events.StatusError,
+				DurationMs: time.Since(wfStart).Milliseconds(),
+				Error:      err.Error(),
+			})
+			fmt.Fprintf(os.Stderr, "ERROR: %s\n", err.Error())
+			os.Exit(exitBrowserError)
+		}
 		outputError(useJSON, exitBrowserError, err.Error())
 		return
 	}
 	defer exec.Close()
 
 	var lastResult *workflow.ActionResult
+	stepsTotal := 0
+	stepsFailed := 0
 	for i, name := range names {
+		// action_start / action_end are emitted by the executor itself
+		// (RunAction wraps runActionLocked) so on_error recovery actions
+		// are correctly bracketed too.
 		result := exec.RunAction(name)
 		lastResult = result
+		// Count completed steps + the failed step itself if the action failed.
+		stepsTotal += result.Steps
 		if !result.OK {
-			break // fail-fast
+			stepsTotal++  // attempt that failed wasn't counted in result.Steps
+			stepsFailed++ // exactly one step fails per action (fail-fast)
+			break
 		}
-		// Print intermediate results for multi-action (not the last one)
-		if len(names) > 1 && i < len(names)-1 {
+		// Print intermediate results for multi-action (not the last one).
+		// Suppress in events mode — action_end already conveys this and
+		// stdout must remain pure JSONL with one record per line.
+		if !emitEvents && len(names) > 1 && i < len(names)-1 {
 			if useJSON {
 				encodeJSON(result)
 			} else {
@@ -301,8 +358,33 @@ func cmdRun(args []string) {
 		}
 	}
 
+	// Final workflow_end + result line.
+	if emitEvents {
+		status := events.StatusOK
+		if lastResult == nil || !lastResult.OK {
+			status = events.StatusError
+		}
+		ev := events.Event{
+			Event:       events.WorkflowEnd,
+			Workflow:    w.Name,
+			Status:      status,
+			DurationMs:  time.Since(wfStart).Milliseconds(),
+			StepsTotal:  stepsTotal,
+			StepsFailed: stepsFailed,
+		}
+		if lastResult != nil && !lastResult.OK {
+			ev.Error = lastResult.Error
+		}
+		emitter.Emit(ev)
+	}
+
 	// Always output the final result (last success or first failure).
-	if useJSON {
+	// Skip in events mode — stdout is reserved for JSONL, and workflow_end
+	// already carries the terminal status. The result still goes to stderr
+	// for humans tailing logs.
+	if emitEvents {
+		fmt.Fprintln(os.Stderr, humanResultLine(lastResult))
+	} else if useJSON {
 		encodeJSON(lastResult)
 	} else {
 		printHumanResult(lastResult)
@@ -312,6 +394,18 @@ func cmdRun(args []string) {
 		exec.WaitOnFailure()
 		os.Exit(exitActionFailed)
 	}
+}
+
+// humanResultLine returns the one-line human summary used for stderr
+// echoing in events mode. Mirrors printHumanResult formatting.
+func humanResultLine(r *workflow.ActionResult) string {
+	if r == nil {
+		return "FAIL  (no result)"
+	}
+	if r.OK {
+		return fmt.Sprintf("OK  %s  %d steps  %dms", r.Action, r.Steps, r.DurationMs)
+	}
+	return fmt.Sprintf("FAIL  %s  %s", r.Action, r.Error)
 }
 
 // ---------------------------------------------------------------------------
@@ -823,6 +917,9 @@ Arguments:
 
 Flags:
   --json          Force JSON output (auto-enabled when stdout is piped)
+  --events MODE   Stream structured lifecycle events on stdout (mode: jsonl).
+                  Stdout becomes pure JSONL — human/log output goes to stderr.
+                  See "Event stream schema" below.
   --headed        Show the browser window (needed for CAPTCHAs, useful for debugging)
   --debug         Log each step as it executes + save screenshots on failure
   --profile DIR   Chrome profile directory for session/cookie persistence
@@ -872,6 +969,33 @@ LLM agent usage patterns:
 
   # 5. Discover available actions first
   brz actions site.yaml | jq -r '.actions[].name'
+
+Event stream schema (--events=jsonl):
+  Each line is a single JSON object. seq is monotonic from 1; ts is RFC3339Nano UTC.
+  Required keys per record: ts, seq, event. Other keys are omitempty.
+
+  Event names emitted:
+    workflow_start    {workflow}
+    action_start      {workflow, action}
+    step_start        {action, step, step_num, step_type, target}
+    retry_attempt     {action, step_num, step_type, attempt, retries_remaining, error}
+    download_started  {path, url}
+    download_completed {path, size}
+    screenshot_captured {path, size}
+    step_end          {action, step, step_num, step_type, status, duration_ms, [error]}
+    action_end        {workflow, action, status, duration_ms, [error]}
+    workflow_end      {workflow, status, steps_total, steps_failed, duration_ms, [error]}
+
+  Status values: ok | error | skipped (skipped fires for optional steps that fail).
+
+  Example:
+    brz run --events=jsonl --env EMAIL=$E --env PASSWORD=$P site.yaml login 2>/dev/null | \
+      jq -c 'select(.event=="step_end" and .status!="ok")'
+
+  Note: flags (--events, --env, --headed, ...) must appear BEFORE the
+  positional workflow.yaml + action arguments. Go's flag parser stops at
+  the first positional, so flags placed after them are silently treated
+  as extra arguments and have no effect.
 `)
 }
 

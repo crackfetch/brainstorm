@@ -1,7 +1,26 @@
 package workflow
 
+import "github.com/crackfetch/brainstorm/internal/events"
+
 // Option configures an Executor.
 type Option func(*Executor)
+
+// WithEventEmitter installs an events.Emitter on the executor. The executor
+// will publish step_start / step_end / retry_attempt / download_* events to
+// this sink as actions run. Default emitter is events.Nop (zero overhead).
+//
+// The emitter is invoked synchronously while e.mu is held. The shipped
+// events.JSONL emitter only writes to its own io.Writer, so this is safe.
+// User-supplied implementations MUST NOT (a) call back into Executor methods
+// — that would re-lock e.mu and deadlock — and MUST NOT (b) block on I/O
+// that could stall every executor method. Treat Emit as fire-and-forget.
+func WithEventEmitter(em events.Emitter) Option {
+	return func(e *Executor) {
+		if em != nil {
+			e.events = em
+		}
+	}
+}
 
 // WithHeaded shows the browser window (useful for CAPTCHAs or debugging).
 func WithHeaded(b bool) Option {
