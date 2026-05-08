@@ -35,12 +35,23 @@ type Workflow struct {
 
 // Action is a named sequence of steps with an optional starting URL.
 type Action struct {
-	URL            string       `yaml:"url,omitempty"`
-	ForceNavigate  bool         `yaml:"force_navigate,omitempty"` // navigate even if URL matches current page
-	Headed         bool         `yaml:"headed,omitempty"`         // show browser window (used by BRZ_HEADED=auto)
-	Viewport       *Viewport    `yaml:"viewport,omitempty"`       // override workflow-level viewport
-	Steps          []Step       `yaml:"steps"`
-	Eval           []EvalAssert `yaml:"eval,omitempty"`           // post-action assertions
+	URL           string       `yaml:"url,omitempty"`
+	ForceNavigate bool         `yaml:"force_navigate,omitempty"` // navigate even if URL matches current page
+	Headed        bool         `yaml:"headed,omitempty"`         // show browser window (used by BRZ_HEADED=auto)
+	Viewport      *Viewport    `yaml:"viewport,omitempty"`       // override workflow-level viewport
+	Steps         []Step       `yaml:"steps"`
+	Eval          []EvalAssert `yaml:"eval,omitempty"`           // post-action assertions
+	// OnError names another action that runs as a recovery if THIS
+	// action fails terminally (after auto-escalation, after step
+	// retries, after the workflow's normal error path). The recovery
+	// action's result replaces the failure: if recovery succeeds, the
+	// original failure is reported as recovered; if recovery itself
+	// fails, both errors are surfaced.
+	//
+	// Common pattern: relogin-and-redirect, clear-cache-and-retry,
+	// reset-modal-state. Keep recovery actions short — they're a
+	// safety net, not a place for the real workflow logic.
+	OnError string `yaml:"on_error,omitempty"`
 }
 
 // EvalAssert is a single post-action assertion. Exactly one field should be set.
@@ -102,8 +113,25 @@ type Step struct {
 	Eval       string     `yaml:"eval,omitempty"`
 
 	// Control flow
-	Label    string `yaml:"label,omitempty"`    // human-readable step description for logging
-	Optional bool   `yaml:"optional,omitempty"` // if true, step failure is non-fatal
+	Label    string     `yaml:"label,omitempty"`    // human-readable step description for logging
+	Optional bool       `yaml:"optional,omitempty"` // if true, step failure is non-fatal
+	Retry    *RetryStep `yaml:"retry,omitempty"`    // retry the step on failure (count + backoff)
+}
+
+// RetryStep configures per-step retry-on-failure. Applies to the same
+// step it accompanies — count=3 means up to 3 total attempts (1 initial
+// + 2 retries). Backoff "none" sleeps 0; "linear" sleeps N*initial_delay
+// before attempt N+1; "exponential" sleeps initial_delay * 2^N.
+//
+// Scope: useful for flaky network-bound steps (click on a slow-loading
+// button, wait_url, wait_visible, eval). The click+download pair has a
+// look-ahead that pre-registers the download before the click; retrying
+// just the click would re-trigger the download flow inconsistently —
+// for that case use action-level on_error instead.
+type RetryStep struct {
+	Count        int    `yaml:"count,omitempty"`         // total attempts (default 1; values <2 disable retry)
+	Backoff      string `yaml:"backoff,omitempty"`       // "none" (default), "linear", "exponential"
+	InitialDelay string `yaml:"initial_delay,omitempty"` // base delay for backoff math; default 1s
 }
 
 type ClickStep struct {

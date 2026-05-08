@@ -810,9 +810,20 @@ func (e *Executor) setupPage(action Action) string {
 
 // RunAction executes a named action from the workflow.
 // Returns a structured ActionResult suitable for JSON serialization.
+// RunAction is the public entry: locks e.mu, then dispatches to the
+// internal runActionLocked. The internal form lets on_error recovery
+// invoke another action without re-acquiring the lock (which would
+// deadlock since we don't release between primary and recovery).
 func (e *Executor) RunAction(name string) *ActionResult {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	return e.runActionLocked(name, 0)
+}
+
+// runActionLocked is the internal action runner. depth tracks recursion
+// from on_error so we can refuse infinitely-chained recoveries.
+func (e *Executor) runActionLocked(name string, depth int) *ActionResult {
+	const maxOnErrorDepth = 1
 	start := time.Now()
 	action, ok := e.workflow.Actions[name]
 	if !ok {
@@ -843,7 +854,7 @@ func (e *Executor) RunAction(name string) *ActionResult {
 			if err := e.restart(true); err != nil {
 				failResult.Error += fmt.Sprintf("; headed escalation failed: %v", err)
 				failResult.DurationMs = time.Since(start).Milliseconds()
-				return failResult
+				return e.maybeRunOnError(name, action, failResult, depth)
 			}
 			// Surface the headed-launch announcement that restart's startLocked
 			// stashed. We hold e.mu here; the announce writes to os.Stderr by
@@ -859,20 +870,21 @@ func (e *Executor) RunAction(name string) *ActionResult {
 			if errMsg := e.setupPage(action); errMsg != "" {
 				failResult.Error += fmt.Sprintf("; headed setup failed: %s", errMsg)
 				failResult.DurationMs = time.Since(start).Milliseconds()
-				return failResult
+				return e.maybeRunOnError(name, action, failResult, depth)
 			}
 			// Retry all steps in headed mode.
 			if retryResult := e.runSteps(name, action); retryResult != nil {
 				retryResult.Escalated = true
 				retryResult.DurationMs = time.Since(start).Milliseconds()
-				return retryResult
+				return e.maybeRunOnError(name, action, retryResult, depth)
 			}
 			escalated = true
 		} else {
 			failResult.DurationMs = time.Since(start).Milliseconds()
-			return failResult
+			return e.maybeRunOnError(name, action, failResult, depth)
 		}
 	}
+	_ = maxOnErrorDepth // const referenced via maybeRunOnError; keeps it visible at call-site
 
 	// Build success result.
 	result := &ActionResult{
@@ -901,6 +913,11 @@ func (e *Executor) RunAction(name string) *ActionResult {
 			result.OK = false
 			result.Error = fmt.Sprintf("%d of %d eval assertions failed", evalResult.Failed, evalResult.Passed+evalResult.Failed)
 			result.PageURL, result.PageHTML = e.capturePageState()
+			// Eval-assertion failure is a terminal action failure, so
+			// the on_error recovery hook fires here too. Without this,
+			// post-action assertions could veto a step-success-only
+			// outcome and skip the recovery the user configured.
+			return e.maybeRunOnError(name, action, result, depth)
 		}
 	}
 
@@ -946,7 +963,7 @@ func (e *Executor) runSteps(name string, action Action) *ActionResult {
 			beforeData = e.captureJPEG()
 		}
 
-		if err := e.executeStep(step); err != nil {
+		if err := e.executeStepWithRetry(name, step, i+1); err != nil {
 			if step.Optional {
 				if e.debug {
 					log.Printf("[%s] optional step %d failed (non-fatal): %v", name, i+1, err)
@@ -998,6 +1015,136 @@ func (e *Executor) runSteps(name string, action Action) *ActionResult {
 		}
 	}
 	return nil
+}
+
+// maybeRunOnError is the terminal-failure recovery hook. When action.OnError
+// names another action and we haven't already exceeded the recovery-chain
+// depth, run the recovery via runActionLocked under the existing e.mu.
+//
+// Results:
+//   - No on_error set: failResult passes through unchanged.
+//   - Recovery action missing: append a clear error, return failResult.
+//   - Recovery succeeds: original failResult.OK stays false, but Error gets
+//     a "; on_error 'X' recovery succeeded" suffix so consumers see the
+//     recovery ran. ok stays false because the originally-requested action
+//     did fail; cleanup-worked doesn't change that fact.
+//   - Recovery itself fails: append the recovery's error to the original.
+//   - Depth check: at most 1 level of on_error chaining. Recovery actions
+//     can't have their own on_error (would silently mask deeper failures
+//     and risk infinite recursion).
+func (e *Executor) maybeRunOnError(name string, action Action, failResult *ActionResult, depth int) *ActionResult {
+	const maxOnErrorDepth = 1
+
+	// Clear any stale pre-registered WaitDownload from the failed
+	// primary. If we don't, a recovery action that itself runs a
+	// click+download would (a) not get a fresh look-ahead registration
+	// because the next-step-is-download check already fired, AND (b)
+	// could observe the stale wait in doDownload's pre-registered path,
+	// confusing the file routing. Cheapest fix: nil it here so any
+	// subsequent action starts from a clean slate.
+	e.pendingDownloadWait = nil
+	e.pendingDownloadDir = ""
+	e.pendingDownloadURL = ""
+
+	if action.OnError == "" {
+		return failResult
+	}
+	if depth >= maxOnErrorDepth {
+		failResult.Error += fmt.Sprintf("; on_error chain limit hit at depth %d (recovery actions cannot themselves declare on_error)", depth)
+		return failResult
+	}
+	if _, ok := e.workflow.Actions[action.OnError]; !ok {
+		failResult.Error += fmt.Sprintf("; on_error action %q not found in workflow", action.OnError)
+		return failResult
+	}
+	if e.debug {
+		log.Printf("[%s] running on_error recovery: %s", name, action.OnError)
+	}
+	recoveryResult := e.runActionLocked(action.OnError, depth+1)
+	if recoveryResult == nil {
+		// Defensive: runActionLocked is documented to always return non-nil.
+		// If something changes, fall back to the original failure unmodified.
+		return failResult
+	}
+	if recoveryResult.OK {
+		failResult.Error += fmt.Sprintf("; on_error '%s' recovery succeeded", action.OnError)
+	} else {
+		failResult.Error += fmt.Sprintf("; on_error '%s' also failed: %s", action.OnError, recoveryResult.Error)
+	}
+	return failResult
+}
+
+// executeStepWithRetry runs a step, optionally retrying on failure when
+// step.Retry is configured. Retry attempts run AFTER the initial attempt,
+// so retry.count = 3 means 1 initial + 2 retries = 3 total attempts.
+//
+// Backoff strategies:
+//   "" / "none"     no delay between attempts
+//   "linear"        attempt N waits initial * N
+//   "exponential"   attempt N waits initial * 2^N
+//
+// Notes on retry + downloads: the click+download look-ahead pre-registers
+// WaitDownload before the click step. Retrying the click is safe — the
+// pre-registration persists across attempts (we only consume it when
+// doDownload runs). Retry on a download step itself is effectively a
+// no-op since the triggering click already fired; use action-level
+// on_error for recovery in that case.
+func (e *Executor) executeStepWithRetry(actionName string, step Step, stepNum int) error {
+	err := e.executeStep(step)
+	if err == nil {
+		return nil
+	}
+	if step.Retry == nil || step.Retry.Count <= 1 {
+		return err
+	}
+
+	initial := 1 * time.Second
+	if step.Retry.InitialDelay != "" {
+		initial = ParseTimeout(step.Retry.InitialDelay)
+	}
+
+	for attempt := 1; attempt < step.Retry.Count; attempt++ {
+		delay := computeBackoff(step.Retry.Backoff, initial, attempt)
+		if delay > 0 {
+			time.Sleep(delay)
+		}
+		if e.debug {
+			log.Printf("[%s] retry step %d attempt %d/%d (waited %s, last err: %v)",
+				actionName, stepNum, attempt+1, step.Retry.Count, delay, err)
+		}
+		err = e.executeStep(step)
+		if err == nil {
+			if e.debug {
+				log.Printf("[%s] retry step %d succeeded on attempt %d", actionName, stepNum, attempt+1)
+			}
+			return nil
+		}
+	}
+	return fmt.Errorf("step failed after %d attempts: %w", step.Retry.Count, err)
+}
+
+// computeBackoff returns the delay before retry attempt N (1-indexed).
+// "linear" with attempt=1 returns initial; with attempt=2 returns 2*initial.
+// "exponential" with attempt=1 returns 2*initial; with attempt=2 returns 4*initial.
+// (Both grow from "initial" at attempt 1, not 0 — the previous attempt
+// just failed, so we always wait at least once.)
+func computeBackoff(strategy string, initial time.Duration, attempt int) time.Duration {
+	if attempt < 1 {
+		return 0
+	}
+	switch strategy {
+	case "linear":
+		return initial * time.Duration(attempt)
+	case "exponential":
+		return initial * time.Duration(1<<attempt)
+	case "", "none":
+		return 0
+	default:
+		// Unknown strategy: fall back to linear so a typo doesn't surface
+		// as "all retries fired instantly without backoff." Document the
+		// supported values; any unknown one is treated as linear.
+		return initial * time.Duration(attempt)
+	}
 }
 
 // stepType returns the type name of a step for error reporting.
@@ -1346,8 +1493,27 @@ func (e *Executor) doDownload(d *DownloadStep) error {
 		wait = e.browser.WaitDownload(downloadDir)
 	}
 
-	// Block until download finishes
-	info := wait()
+	// Honor d.Timeout. rod's WaitDownload returns a func that blocks
+	// indefinitely; without bounding it here, a click that didn't
+	// actually trigger a download would hang the executor forever
+	// (no retry, no cancel, no recovery). Default 60s matches a sane
+	// upper bound for most real download flows.
+	timeout := 60 * time.Second
+	if d.Timeout != "" {
+		timeout = ParseTimeout(d.Timeout)
+	}
+
+	type waitOut struct{ info *proto.PageDownloadWillBegin }
+	resCh := make(chan waitOut, 1)
+	go func() { resCh <- waitOut{info: wait()} }()
+
+	var info *proto.PageDownloadWillBegin
+	select {
+	case r := <-resCh:
+		info = r.info
+	case <-time.After(timeout):
+		return fmt.Errorf("download timed out after %s (no file received)", timeout)
+	}
 
 	if info == nil {
 		return fmt.Errorf("download failed: no download info received")

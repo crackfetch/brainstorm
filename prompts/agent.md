@@ -248,6 +248,37 @@ actions:
 
 Any step can include `label: "description"` for logging and `optional: true` to continue on failure.
 
+### Retry on flaky steps
+
+Any step can be retried by attaching a `retry:` block:
+
+```yaml
+- click:
+    selector: '.flaky-button'
+  retry:
+    count: 3                    # total attempts (1 initial + 2 retries)
+    backoff: exponential        # "none" (default), "linear", "exponential"
+    initial_delay: "1s"          # base for backoff math; default 1s
+```
+
+`backoff: linear` waits `initial * N` before retry N. `backoff: exponential` waits `initial * 2^N`. Useful for `click`, `fill`, `wait_visible`, `wait_url`, `eval` against flaky targets. Retrying a `download` step is a no-op since the triggering click already fired — use action-level `on_error` for that pattern.
+
+### Action-level recovery with on_error
+
+When an action fails terminally (after step retries, after auto-escalation), brz can run a named recovery action:
+
+```yaml
+actions:
+  primary:
+    on_error: cleanup_and_relogin
+    steps: [...]
+
+  cleanup_and_relogin:
+    steps: [...]
+```
+
+The recovery runs once. The original action still reports `ok: false` (the user-requested action did fail), but `error` carries `; on_error 'X' recovery succeeded` or `; on_error 'X' also failed: ...`. Recovery actions can't chain — `on_error` on a recovery is silently ignored at depth 1 to prevent infinite recovery loops.
+
 **Click + Download rule:** Always put `download` immediately after the `click` that triggers it. brz registers the download listener before executing the click.
 
 ### Timeouts
