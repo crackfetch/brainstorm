@@ -97,6 +97,8 @@ func main() {
 		cmdProbe(os.Args[2:])
 	case "mcp":
 		cmdMCP(os.Args[2:])
+	case "session":
+		cmdSession(os.Args[2:])
 	case "prompt":
 		cmdPrompt()
 	case "version":
@@ -1089,6 +1091,7 @@ Commands:
   examples   List, print, or scaffold bundled workflow YAML examples
   probe      Interactive selector REPL — type selectors, see live matches
   mcp        Run a Model Context Protocol server over stdio (LLM tool calls)
+  session    Capture a logged-in cookie bundle (headed login, then quiet HTTP from any tool)
   prompt     Print the LLM agent prompt (teaches an AI how to use brz)
   version    Print the brz version string
   help       Show this help text
