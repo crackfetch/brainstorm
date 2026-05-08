@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/crackfetch/brainstorm/internal/events"
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/input"
 	"github.com/go-rod/rod/lib/launcher"
@@ -114,16 +115,62 @@ type Executor struct {
 	pendingAnnouncePID  int
 	pendingAnnounceExe  string
 	pendingAnnounceFlag bool
+
+	// events receives lifecycle events (step_start/step_end/retry_attempt/...).
+	// Default is events.Nop, so unset emitters cost a single inlinable method
+	// call. Set via WithEventEmitter. Never nil after NewExecutor.
+	events events.Emitter
 }
 
 // NewExecutor creates an executor with browser configuration.
 // Use functional options: WithHeaded(true), WithDebug(true), WithProfileDir("...").
 func NewExecutor(w *Workflow, opts ...Option) *Executor {
-	e := &Executor{workflow: w, userAgent: fallbackUserAgent}
+	e := &Executor{workflow: w, userAgent: fallbackUserAgent, events: events.Nop{}}
 	for _, opt := range opts {
 		opt(e)
 	}
 	return e
+}
+
+// emit publishes an event, defaulting to Nop when no emitter has been
+// installed (tests sometimes construct &Executor{} directly, bypassing
+// NewExecutor's default).
+func (e *Executor) emit(ev events.Event) {
+	if e.events == nil {
+		return
+	}
+	e.events.Emit(ev)
+}
+
+// stepTarget extracts a human-readable target string for a step (selector,
+// URL, text, etc). Used to populate Event.Target.
+func stepTarget(s Step) string {
+	switch {
+	case s.Navigate != "":
+		return s.Navigate
+	case s.Click != nil:
+		if s.Click.Selector != "" {
+			return s.Click.Selector
+		}
+		return s.Click.Text
+	case s.Fill != nil:
+		return s.Fill.Selector
+	case s.Select != nil:
+		return s.Select.Selector
+	case s.Upload != nil:
+		return s.Upload.Selector
+	case s.WaitVisible != nil:
+		return s.WaitVisible.Selector
+	case s.WaitText != nil:
+		return s.WaitText.Text
+	case s.WaitURL != nil:
+		return s.WaitURL.Match
+	case s.WaitEnabled != nil:
+		return s.WaitEnabled.Selector
+	case s.Screenshot != "":
+		return s.Screenshot
+	}
+	return ""
 }
 
 // UserAgent returns the User-Agent string the executor uses for page requests.
@@ -817,7 +864,28 @@ func (e *Executor) setupPage(action Action) string {
 func (e *Executor) RunAction(name string) *ActionResult {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return e.runActionLocked(name, 0)
+	wfName := ""
+	if e.workflow != nil {
+		wfName = e.workflow.Name
+	}
+	start := time.Now()
+	e.emit(events.Event{Event: events.ActionStart, Workflow: wfName, Action: name})
+	r := e.runActionLocked(name, 0)
+	status := events.StatusOK
+	errMsg := ""
+	if r != nil && !r.OK {
+		status = events.StatusError
+		errMsg = r.Error
+	}
+	e.emit(events.Event{
+		Event:      events.ActionEnd,
+		Workflow:   wfName,
+		Action:     name,
+		Status:     status,
+		DurationMs: time.Since(start).Milliseconds(),
+		Error:      errMsg,
+	})
+	return r
 }
 
 // runActionLocked is the internal action runner. depth tracks recursion
@@ -937,6 +1005,17 @@ func (e *Executor) runSteps(name string, action Action) *ActionResult {
 			log.Printf("[%s] executing: %s", name, label)
 		}
 
+		stepKind := stepType(step)
+		stepStart := time.Now()
+		e.emit(events.Event{
+			Event:    events.StepStart,
+			Action:   name,
+			Step:     label,
+			StepNum:  i + 1,
+			StepType: stepKind,
+			Target:   stepTarget(step),
+		})
+
 		// Look ahead: if the NEXT step is a download, register WaitDownload now
 		// (before executing the current click step) and capture the current URL
 		// so download.return_to=previous can restore it after the download lands.
@@ -968,6 +1047,16 @@ func (e *Executor) runSteps(name string, action Action) *ActionResult {
 				if e.debug {
 					log.Printf("[%s] optional step %d failed (non-fatal): %v", name, i+1, err)
 				}
+				e.emit(events.Event{
+					Event:      events.StepEnd,
+					Action:     name,
+					Step:       label,
+					StepNum:    i + 1,
+					StepType:   stepKind,
+					Status:     events.StatusSkipped,
+					DurationMs: time.Since(stepStart).Milliseconds(),
+					Error:      err.Error(),
+				})
 				continue
 			}
 
@@ -1011,8 +1100,27 @@ func (e *Executor) runSteps(name string, action Action) *ActionResult {
 				}
 			}
 
+			e.emit(events.Event{
+				Event:      events.StepEnd,
+				Action:     name,
+				Step:       label,
+				StepNum:    i + 1,
+				StepType:   stepKind,
+				Status:     events.StatusError,
+				DurationMs: time.Since(stepStart).Milliseconds(),
+				Error:      err.Error(),
+			})
 			return result
 		}
+		e.emit(events.Event{
+			Event:      events.StepEnd,
+			Action:     name,
+			Step:       label,
+			StepNum:    i + 1,
+			StepType:   stepKind,
+			Status:     events.StatusOK,
+			DurationMs: time.Since(stepStart).Milliseconds(),
+		})
 	}
 	return nil
 }
@@ -1112,6 +1220,15 @@ func (e *Executor) executeStepWithRetry(actionName string, step Step, stepNum in
 			log.Printf("[%s] retry step %d attempt %d/%d (waited %s, last err: %v)",
 				actionName, stepNum, attempt+1, step.Retry.Count, delay, err)
 		}
+		e.emit(events.Event{
+			Event:            events.RetryAttempt,
+			Action:           actionName,
+			StepNum:          stepNum,
+			StepType:         stepType(step),
+			Attempt:          attempt + 1,
+			RetriesRemaining: step.Retry.Count - attempt - 1,
+			Error:            err.Error(),
+		})
 		err = e.executeStep(step)
 		if err == nil {
 			if e.debug {
@@ -1523,6 +1640,12 @@ func (e *Executor) doDownload(d *DownloadStep) error {
 	downloadPath := filepath.Join(downloadDir, info.GUID)
 	e.LastDownload = downloadPath
 
+	e.emit(events.Event{
+		Event: events.DownloadStarted,
+		Path:  downloadPath,
+		URL:   info.URL,
+	})
+
 	// Honor save_as / save_to: rename the captured file to the requested
 	// path. SaveAs takes precedence over SaveTo when both are set so older
 	// workflows that use save_as keep working unchanged.
@@ -1549,6 +1672,17 @@ func (e *Executor) doDownload(d *DownloadStep) error {
 	if data, err := os.ReadFile(downloadPath); err == nil {
 		e.LastResult = string(data)
 	}
+
+	// Emit download_completed with final path + size.
+	var downloadSize int64
+	if fi, ferr := os.Stat(downloadPath); ferr == nil {
+		downloadSize = fi.Size()
+	}
+	e.emit(events.Event{
+		Event: events.DownloadCompleted,
+		Path:  downloadPath,
+		Size:  downloadSize,
+	})
 
 	// return_to: re-navigate the tab once the download is captured. A
 	// click-triggered download often leaves the page at about:blank — without
@@ -1950,6 +2084,11 @@ func (e *Executor) takeScreenshot(name string) {
 	if e.debug {
 		log.Printf("screenshot saved: %s", path)
 	}
+	e.emit(events.Event{
+		Event: events.ScreenshotCaptured,
+		Path:  path,
+		Size:  int64(len(data)),
+	})
 }
 
 // capturePageState returns the current page URL and HTML for debugging.
