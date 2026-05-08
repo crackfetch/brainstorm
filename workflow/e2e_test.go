@@ -3,6 +3,8 @@ package workflow
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -15,6 +17,23 @@ func skipIfNoChrome(t *testing.T) {
 	t.Helper()
 	if _, exists := launcher.LookPath(); !exists {
 		t.Skip("Chrome not found — skipping browser E2E test")
+	}
+}
+
+// skipIfNoDisplay skips a headed-mode test on Linux when no display
+// server is available. Linux CI runners typically have no X / Wayland
+// session, and rod's launcher fails to obtain a debug URL because
+// Chrome bails with "Missing X server or $DISPLAY" before the
+// DevTools port binds. Headless tests don't hit this — they run fine
+// on a bare runner. macOS / Windows have always-available windowing
+// systems for our purposes; the check is Linux-only.
+func skipIfNoDisplay(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS != "linux" {
+		return
+	}
+	if os.Getenv("DISPLAY") == "" && os.Getenv("WAYLAND_DISPLAY") == "" {
+		t.Skip("no DISPLAY / WAYLAND_DISPLAY — skipping headed-mode test on Linux")
 	}
 }
 

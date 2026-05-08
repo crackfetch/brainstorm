@@ -105,6 +105,7 @@ func TestStart_Headless_NoAnnouncement(t *testing.T) {
 
 func TestStart_Headed_AnnouncesOnce(t *testing.T) {
 	skipIfNoChrome(t)
+	skipIfNoDisplay(t) // headed launch needs an X / Wayland session
 	// Headed Start must emit exactly one announcement. Two would mean a
 	// duplicate call site (e.g. both the launch and a stealth-injection
 	// path firing the announce). Zero would mean a refactor disabled it.
@@ -132,6 +133,7 @@ func TestStart_Headed_AnnouncesOnce(t *testing.T) {
 
 func TestStart_Headed_NavigatesAfterAnnouncement(t *testing.T) {
 	skipIfNoChrome(t)
+	skipIfNoDisplay(t) // headed launch needs an X / Wayland session
 	// After the announce, the browser must still be usable — make sure we
 	// didn't accidentally consume some launch-time error path. Standing up
 	// a tiny httptest server and navigating is the cheapest end-to-end
