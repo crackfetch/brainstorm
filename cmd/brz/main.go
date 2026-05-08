@@ -74,6 +74,8 @@ func main() {
 		cmdActions(os.Args[2:])
 	case "status":
 		cmdStatus(os.Args[2:])
+	case "logs":
+		cmdLogs(os.Args[2:])
 	case "prompt":
 		cmdPrompt()
 	case "version":
@@ -735,6 +737,7 @@ Commands:
   validate   Parse a workflow file and report errors or summary stats
   actions    List all actions defined in a workflow with step counts
   status     Print a diagnostic snapshot (running browsers, profile dir, etc.)
+  logs       List recent failure-screenshot artifacts in TempDir
   prompt     Print the LLM agent prompt (teaches an AI how to use brz)
   version    Print the brz version string
   help       Show this help text

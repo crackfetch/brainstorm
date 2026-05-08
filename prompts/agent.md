@@ -155,6 +155,27 @@ brz actions <workflow.yaml> [--json]
 
 ## Diagnostic Commands
 
+### logs — list recent failure-screenshot artifacts
+
+```bash
+brz logs [--follow] [--limit N] [--json]
+```
+
+When a workflow step fails, brz writes two artifacts to `$TMPDIR`:
+- `<action>_failed_<timestamp>_<step>.png` — page state after failure
+- `<action>_before_<step>.jpg` — page state just before the failed step
+
+`brz logs` lists those artifacts newest-first. Use it to find the failure screenshots from your last run without `grep`'ing `/tmp` by hand.
+
+Flags:
+- `--follow` — watch `$TMPDIR` and print each new artifact as it appears (useful when running brz in another shell). NDJSON in `--json` mode.
+- `--limit N` — max entries (default 20; `0` for unlimited).
+- `--json` — array output (auto-enabled when piped).
+
+Each entry includes the parsed action name, step index, kind (failed/before), timestamp, file size, and full path. Pipe through jq to find a specific action's screenshots: `brz logs --json | jq '.[] | select(.action == "login")'`.
+
+`brz status` reports the count at a glance; `brz logs` enumerates them.
+
 ### status — print a snapshot of brz's local state
 
 ```bash
