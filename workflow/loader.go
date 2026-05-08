@@ -80,7 +80,11 @@ func LoadStrictFromBytes(data []byte) (*Workflow, error) {
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
 	if err := dec.Decode(&w); err != nil {
-		return nil, fmt.Errorf("parse workflow: %w", err)
+		// Decorate with field-name suggestions before wrapping. The
+		// inner err message is the only signal yaml.v3 gives us about
+		// which struct field was rejected, so we keep it as the source
+		// of truth and just append "Did you mean?" hints.
+		return nil, fmt.Errorf("parse workflow: %w", decorateStrictError(err))
 	}
 
 	if w.Name == "" {

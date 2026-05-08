@@ -137,13 +137,15 @@ Note: flags must come BEFORE the positional file path. Go's `flag` parser stops 
 
 By default `validate` is lenient: unknown fields in YAML are silently dropped (yaml.v3 default). This preserves backward compat for older workflows that may have stale fields.
 
-`--strict` switches the loader to `KnownFields(true)` so any typo is rejected with a YAML line number. Catches the canonical bug where `save_too: ...` (one-character typo of `save_to:`) passes basic validation, then silently fails at runtime because the field goes nowhere.
+`--strict` switches the loader to `KnownFields(true)` so any typo is rejected with a YAML line number AND a "Did you mean?" suggestion. Catches the canonical bug where `save_too: ...` (one-character typo of `save_to:`) passes basic validation, then silently fails at runtime because the field goes nowhere.
 
 ```bash
 $ brz validate --strict workflow.yaml
 parse workflow workflow.yaml: yaml: unmarshal errors:
-  line 7: field save_too not found in type workflow.DownloadStep
+  line 7: unknown field 'save_too' in download step. Did you mean 'save_to'? Valid fields: return_to, save_as, save_to, timeout.
 ```
+
+The suggestion is computed by Levenshtein distance against the type's declared YAML tags (built once at package init via reflection). When no candidate is close enough, the suggestion is omitted but the valid-fields list is still included.
 
 Use `--strict` in CI / pre-commit; rely on the lenient default for ad-hoc one-offs.
 
