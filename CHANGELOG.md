@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- Rod's `leakless.exe` helper is now disabled for browser launches. On Windows, Microsoft Defender can block that extracted third-party helper as "virus or potentially unwanted software" before Chrome starts. Brainstorm already owns browser cleanup in its executor lifecycle, so launching Chrome directly avoids the Defender false-positive path without changing workflow behavior.
 - `launchForLogin` now deletes any leftover `<profileDir>/DevToolsActivePort` from a previous Chrome run before spawning the new Chrome process, and `discoverDebugPort` rejects the file by `mtime` until Chrome rewrites it. Closes #41 — without this, a fast relaunch (integration test tearing Chrome down then immediately retrying, or any caller that runs brz back-to-back against the same profile) would land on the previous run's port number and silently fail with `connection refused` later. The mtime gate is belt-and-suspenders in case the pre-launch `os.Remove` ever fails (rare: file open by another process, permission error). Backwards compatible at the test surface: `discoverDebugPort` accepts `time.Time{}` as a sentinel meaning "no gating."
 
 ### Added

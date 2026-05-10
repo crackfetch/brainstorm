@@ -102,6 +102,14 @@ func TestBuildLauncher_AlwaysSetsStealthFlags(t *testing.T) {
 	}
 }
 
+func TestBuildLauncher_DisablesLeaklessHelper(t *testing.T) {
+	e := &Executor{workflow: &Workflow{Name: "test"}}
+	args := e.buildLauncher().FormatArgs()
+	if containsArg(args, "--rod-leakless") {
+		t.Fatalf("launcher must not use leakless helper; args: %s", strings.Join(args, " "))
+	}
+}
+
 // TestParseChromeVersion verifies the version-string parser that gates
 // --headless=new vs bare --headless.
 func TestParseChromeVersion(t *testing.T) {

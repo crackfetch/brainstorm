@@ -325,7 +325,7 @@ func clientHintsPlatform() (platform, arch string) {
 // two paths cannot drift — a missing flag in one of them previously meant
 // stealth would silently degrade after a stale-lock recovery.
 func (e *Executor) buildLauncher() *launcher.Launcher {
-	l := launcher.New()
+	l := launcher.New().Leakless(false)
 
 	// Use system Chrome if available, fall back to rod's auto-download.
 	if path, exists := launcher.LookPath(); exists {
