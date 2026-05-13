@@ -708,6 +708,10 @@ func (e *Executor) ConnectAfterLogin() error {
 // which delegates to connectCDP. Tests override this to avoid spinning up a
 // real CDP-over-WebSocket implementation while still exercising the
 // port-file read and launcher.ResolveURL HTTP path.
+//
+// connectControlURLFunc is the seam tests use to stub rod attach. Tests
+// that override this MUST NOT call t.Parallel() — overrides are per-test,
+// not per-test-goroutine, and parallel tests would race on this var.
 var connectControlURLFunc = defaultConnectControlURL
 
 func defaultConnectControlURL(e *Executor, controlURL string) error {
@@ -730,7 +734,7 @@ func readDebugPortFromFile(profileDir string) (string, error) {
 	line := strings.SplitN(string(data), "\n", 2)[0]
 	line = strings.TrimSpace(line)
 	port, err := strconv.Atoi(line)
-	if err != nil || port <= 0 {
+	if err != nil || port <= 0 || port > 65535 {
 		return "", fmt.Errorf("DevToolsActivePort at %s contains invalid port: %q", portFile, line)
 	}
 	return line, nil
@@ -743,6 +747,9 @@ func readDebugPortFromFile(profileDir string) (string, error) {
 //
 // A true result means ConnectToExisting is very likely to succeed; a false
 // result means the caller should launch a fresh Chrome instead.
+//
+// Liveness can change between calls; a true result does not guarantee a
+// subsequent ConnectToExisting will succeed.
 func (e *Executor) HasLiveChrome(profileDir string) bool {
 	port, err := readDebugPortFromFile(profileDir)
 	if err != nil {
@@ -769,12 +776,18 @@ func (e *Executor) HasLiveChrome(profileDir string) bool {
 // Returns an error if the port file is missing or unparseable, if the
 // DevTools HTTP endpoint does not respond, or if the underlying rod attach
 // fails. Use HasLiveChrome for a non-mutating pre-check.
+//
+// Idempotent for the same profileDir. Returns an error if called with a
+// different profileDir while already attached.
 func (e *Executor) ConnectToExisting(profileDir string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
 	if e.browser != nil {
-		return nil // already attached
+		if e.profileDir != "" && e.profileDir != profileDir {
+			return fmt.Errorf("Executor already attached to a different profile (%s); cannot re-attach to %s", e.profileDir, profileDir)
+		}
+		return nil // already attached to the same profile
 	}
 
 	port, err := readDebugPortFromFile(profileDir)

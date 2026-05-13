@@ -100,13 +100,28 @@ func TestHasLiveChrome_PortFileButPortNotListening(t *testing.T) {
 }
 
 func TestHasLiveChrome_PortFileMalformed(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "DevToolsActivePort"), []byte("not-a-port"), 0o644); err != nil {
-		t.Fatalf("write: %v", err)
+	cases := []struct {
+		name    string
+		content string
+	}{
+		{"NotANumber", "not-a-port"},
+		{"Empty", ""},
+		{"Zero", "0"},
+		{"Negative", "-1"},
+		{"OutOfRange", "99999"},
 	}
-	e := &Executor{}
-	if e.HasLiveChrome(dir) {
-		t.Fatal("HasLiveChrome should be false when port file content is unparseable")
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "DevToolsActivePort"), []byte(tc.content), 0o644); err != nil {
+				t.Fatalf("write: %v", err)
+			}
+			e := &Executor{}
+			if e.HasLiveChrome(dir) {
+				t.Fatalf("HasLiveChrome should be false for content %q", tc.content)
+			}
+		})
 	}
 }
 
@@ -189,6 +204,78 @@ func TestConnectToExisting_HappyPath(t *testing.T) {
 	}
 	if !strings.Contains(capturedURL, ":"+port) {
 		t.Fatalf("control URL %q should point at the discovered port %s", capturedURL, port)
+	}
+}
+
+func TestConnectToExisting_IdempotentForSameProfileDir(t *testing.T) {
+	dir := t.TempDir()
+	_, port, _ := newDevToolsStub(t)
+	writePortFile(t, dir, port)
+
+	prev := connectControlURLFunc
+	t.Cleanup(func() { connectControlURLFunc = prev })
+
+	var calls int
+	stubBrowser := &rod.Browser{}
+	connectControlURLFunc = func(e *Executor, controlURL string) error {
+		calls++
+		e.browser = stubBrowser
+		return nil
+	}
+
+	e := &Executor{}
+	if err := e.ConnectToExisting(dir); err != nil {
+		t.Fatalf("first ConnectToExisting: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("expected 1 hook invocation after first call, got %d", calls)
+	}
+	firstBrowser := e.browser
+
+	if err := e.ConnectToExisting(dir); err != nil {
+		t.Fatalf("second ConnectToExisting (same dir) should be nil, got: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("hook must not be invoked a second time for same profileDir, got %d calls", calls)
+	}
+	if e.browser != firstBrowser {
+		t.Fatal("e.browser changed on idempotent second call")
+	}
+}
+
+func TestConnectToExisting_ErrorsOnDifferentProfileDir(t *testing.T) {
+	dirA := t.TempDir()
+	dirB := t.TempDir()
+	_, port, _ := newDevToolsStub(t)
+	writePortFile(t, dirA, port)
+	writePortFile(t, dirB, port)
+
+	prev := connectControlURLFunc
+	t.Cleanup(func() { connectControlURLFunc = prev })
+
+	stubBrowser := &rod.Browser{}
+	connectControlURLFunc = func(e *Executor, controlURL string) error {
+		e.browser = stubBrowser
+		return nil
+	}
+
+	e := &Executor{}
+	if err := e.ConnectToExisting(dirA); err != nil {
+		t.Fatalf("first ConnectToExisting(dirA): %v", err)
+	}
+
+	err := e.ConnectToExisting(dirB)
+	if err == nil {
+		t.Fatal("expected error when re-attaching to a different profileDir")
+	}
+	if !strings.Contains(err.Error(), dirA) || !strings.Contains(err.Error(), dirB) {
+		t.Fatalf("error should mention both dirA (%s) and dirB (%s), got: %v", dirA, dirB, err)
+	}
+	if e.browser != stubBrowser {
+		t.Fatal("e.browser should still point at the dirA browser after rejected re-attach")
+	}
+	if e.profileDir != dirA {
+		t.Fatalf("e.profileDir should remain dirA, got %q", e.profileDir)
 	}
 }
 
