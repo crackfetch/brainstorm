@@ -703,6 +703,115 @@ func (e *Executor) ConnectAfterLogin() error {
 	return nil
 }
 
+// connectControlURLFunc is the seam between Executor.ConnectToExisting and
+// the real rod CDP attach. Production code uses defaultConnectControlURL,
+// which delegates to connectCDP. Tests override this to avoid spinning up a
+// real CDP-over-WebSocket implementation while still exercising the
+// port-file read and launcher.ResolveURL HTTP path.
+//
+// connectControlURLFunc is the seam tests use to stub rod attach. Tests
+// that override this MUST NOT call t.Parallel() — overrides are per-test,
+// not per-test-goroutine, and parallel tests would race on this var.
+var connectControlURLFunc = defaultConnectControlURL
+
+func defaultConnectControlURL(e *Executor, controlURL string) error {
+	return e.connectCDP(controlURL)
+}
+
+// readDebugPortFromFile reads a port number written by Chrome into
+// <profileDir>/DevToolsActivePort. Unlike discoverDebugPort, this does not
+// poll: the caller is attaching to an already-running Chrome, so the file
+// either exists now or the Chrome we wanted to attach to is gone.
+func readDebugPortFromFile(profileDir string) (string, error) {
+	if profileDir == "" {
+		return "", fmt.Errorf("profileDir is required")
+	}
+	portFile := filepath.Join(profileDir, "DevToolsActivePort")
+	data, err := os.ReadFile(portFile)
+	if err != nil {
+		return "", fmt.Errorf("read DevToolsActivePort at %s: %w", portFile, err)
+	}
+	line := strings.SplitN(string(data), "\n", 2)[0]
+	line = strings.TrimSpace(line)
+	port, err := strconv.Atoi(line)
+	if err != nil || port <= 0 || port > 65535 {
+		return "", fmt.Errorf("DevToolsActivePort at %s contains invalid port: %q", portFile, line)
+	}
+	return line, nil
+}
+
+// HasLiveChrome reports whether there is a usable Chrome process running
+// with the given profile directory. The check is cheap — it stats the
+// DevToolsActivePort file, parses the port number, and issues a single
+// HTTP GET against /json/version on that port. Both steps must succeed.
+//
+// A true result means ConnectToExisting is very likely to succeed; a false
+// result means the caller should launch a fresh Chrome instead.
+//
+// Liveness can change between calls; a true result does not guarantee a
+// subsequent ConnectToExisting will succeed.
+func (e *Executor) HasLiveChrome(profileDir string) bool {
+	port, err := readDebugPortFromFile(profileDir)
+	if err != nil {
+		return false
+	}
+	// ResolveURL performs an HTTP GET against /json/version and returns the
+	// WebSocket URL on success. We don't need the URL here — we only need
+	// "did the port respond" — but reusing the same call keeps liveness and
+	// attach using the same probe so they cannot diverge.
+	if _, err := launcher.ResolveURL("127.0.0.1:" + port); err != nil {
+		return false
+	}
+	return true
+}
+
+// ConnectToExisting attaches this Executor to a Chrome process that is
+// already running with the given profile directory. The port is discovered
+// from <profileDir>/DevToolsActivePort, the WebSocket URL is resolved via
+// the same launcher.ResolveURL path used after a fresh launch, and the
+// final CDP attach goes through connectCDP. After this returns nil the
+// Executor is in the same state as one that just completed Start() +
+// ConnectAfterLogin().
+//
+// Returns an error if the port file is missing or unparseable, if the
+// DevTools HTTP endpoint does not respond, or if the underlying rod attach
+// fails. Use HasLiveChrome for a non-mutating pre-check.
+//
+// Idempotent for the same profileDir. Returns an error if called with a
+// different profileDir while already attached.
+func (e *Executor) ConnectToExisting(profileDir string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if e.browser != nil {
+		if e.profileDir != "" && e.profileDir != profileDir {
+			return fmt.Errorf("Executor already attached to a different profile (%s); cannot re-attach to %s", e.profileDir, profileDir)
+		}
+		return nil // already attached to the same profile
+	}
+
+	port, err := readDebugPortFromFile(profileDir)
+	if err != nil {
+		return err
+	}
+
+	wsURL, err := launcher.ResolveURL("127.0.0.1:" + port)
+	if err != nil {
+		return fmt.Errorf("resolve Chrome debug URL on port %s: %w", port, err)
+	}
+
+	if err := connectControlURLFunc(e, wsURL); err != nil {
+		return fmt.Errorf("attach to existing Chrome: %w", err)
+	}
+
+	// Remember the resolved URL and port so callers can introspect the
+	// session the same way they would after Start() + ConnectAfterLogin().
+	e.controlURL = wsURL
+	e.debugPort = port
+	e.profileDir = profileDir
+	return nil
+}
+
 // removeStaleSingletonLock checks whether the SingletonLock in the profile
 // directory is held by a dead process. If so, it removes the lock file and
 // returns true. If a live process holds the lock, it returns false — we never
@@ -1228,9 +1337,10 @@ func (e *Executor) maybeRunOnError(name string, action Action, failResult *Actio
 // so retry.count = 3 means 1 initial + 2 retries = 3 total attempts.
 //
 // Backoff strategies:
-//   "" / "none"     no delay between attempts
-//   "linear"        attempt N waits initial * N
-//   "exponential"   attempt N waits initial * 2^N
+//
+//	"" / "none"     no delay between attempts
+//	"linear"        attempt N waits initial * N
+//	"exponential"   attempt N waits initial * 2^N
 //
 // Notes on retry + downloads: the click+download look-ahead pre-registers
 // WaitDownload before the click step. Retrying the click is safe — the
