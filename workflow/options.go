@@ -56,3 +56,29 @@ func WithLoginURL(loginURL, successURL string) Option {
 	}
 }
 
+// WithChromeFlags forwards extra Chrome command-line flags to the launcher.
+// Each map entry becomes a "--name=value" arg, or a bare "--name" when the
+// value is the empty string. Applied AFTER the built-in stealth/viewport
+// flags so callers can override brainstorm defaults if they need to (e.g.
+// pin a different --window-position, or disable Chrome's background-tab
+// throttling for long-running automation that runs while the window is
+// minimized or occluded).
+//
+// Multiple WithChromeFlags calls accumulate. A later call's keys overwrite
+// earlier ones for the same name. Passing nil or an empty map is a no-op.
+// Backwards compatible: omitting this option produces identical launcher
+// args to prior versions.
+func WithChromeFlags(flags map[string]string) Option {
+	return func(e *Executor) {
+		if len(flags) == 0 {
+			return
+		}
+		if e.chromeFlags == nil {
+			e.chromeFlags = make(map[string]string, len(flags))
+		}
+		for k, v := range flags {
+			e.chromeFlags[k] = v
+		}
+	}
+}
+

@@ -21,6 +21,7 @@ import (
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/input"
 	"github.com/go-rod/rod/lib/launcher"
+	"github.com/go-rod/rod/lib/launcher/flags"
 	"github.com/go-rod/rod/lib/proto"
 )
 
@@ -102,6 +103,12 @@ type Executor struct {
 	// debugPort is the actual port Chrome bound to when launched with
 	// --remote-debugging-port=0. Set by launchForLogin() after Chrome starts.
 	debugPort string
+
+	// chromeFlags holds caller-supplied extra Chrome flags forwarded via
+	// WithChromeFlags. Applied at the end of buildLauncher so callers can
+	// override brainstorm defaults (e.g. window-position, throttling).
+	// Empty string value = bare "--name" flag; non-empty = "--name=value".
+	chromeFlags map[string]string
 
 	// announceWriter receives status lines (currently just the headed-launch
 	// announcement). Nil falls back to os.Stderr. Set only by tests via
@@ -367,6 +374,15 @@ func (e *Executor) buildLauncher() *launcher.Launcher {
 			l = l.Headless(true)
 		} else {
 			l = l.Set("headless", "new")
+		}
+	}
+
+	// Caller-supplied flags applied last so they override defaults.
+	for name, value := range e.chromeFlags {
+		if value == "" {
+			l = l.Set(flags.Flag(name))
+		} else {
+			l = l.Set(flags.Flag(name), value)
 		}
 	}
 
