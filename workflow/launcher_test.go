@@ -298,6 +298,115 @@ func TestDiscoverDebugPort(t *testing.T) {
 	})
 }
 
+// TestBuildLauncher_WithChromeFlags asserts that caller-supplied extra flags
+// from WithChromeFlags reach the launcher's argv. Covers both the
+// bare-flag (empty value) and key=value cases.
+func TestBuildLauncher_WithChromeFlags(t *testing.T) {
+	e := &Executor{
+		workflow: &Workflow{Name: "test"},
+		chromeFlags: map[string]string{
+			"disable-background-timer-throttling":    "",
+			"disable-renderer-backgrounding":         "",
+			"disable-backgrounding-occluded-windows": "",
+			"force-color-profile":                    "srgb",
+		},
+	}
+	args := e.buildLauncher().FormatArgs()
+	joined := strings.Join(args, " ")
+
+	for _, want := range []string{
+		"--disable-background-timer-throttling",
+		"--disable-renderer-backgrounding",
+		"--disable-backgrounding-occluded-windows",
+		"--force-color-profile=srgb",
+	} {
+		if !containsArg(args, want) {
+			t.Errorf("missing caller-supplied flag %q in: %s", want, joined)
+		}
+	}
+}
+
+// TestBuildLauncher_ChromeFlagsOverrideDefaults asserts caller flags are
+// applied AFTER built-in flags, so passing window-position overrides the
+// default 100,100 in headed mode.
+func TestBuildLauncher_ChromeFlagsOverrideDefaults(t *testing.T) {
+	e := &Executor{
+		workflow: &Workflow{Name: "test"},
+		headed:   true,
+		chromeFlags: map[string]string{
+			"window-position": "500,500",
+		},
+	}
+	args := e.buildLauncher().FormatArgs()
+	joined := strings.Join(args, " ")
+
+	if !containsArg(args, "--window-position=500,500") {
+		t.Errorf("override missing; args: %s", joined)
+	}
+	for _, a := range args {
+		if a == "--window-position=100,100" {
+			t.Errorf("default window-position leaked through alongside override; args: %s", joined)
+		}
+	}
+}
+
+// TestBuildLauncher_NilChromeFlagsMatchesBaseline pins backwards compat:
+// not passing WithChromeFlags (nil) or passing an empty map must produce
+// the exact same argv as prior versions. Pinning a fixed profileDir on
+// all three so rod's auto-generated temp --user-data-dir doesn't make
+// every run unique.
+func TestBuildLauncher_NilChromeFlagsMatchesBaseline(t *testing.T) {
+	profileDir := t.TempDir()
+	mk := func(flags map[string]string) []string {
+		return (&Executor{
+			workflow:    &Workflow{Name: "test"},
+			profileDir:  profileDir,
+			chromeFlags: flags,
+		}).buildLauncher().FormatArgs()
+	}
+	baseline := mk(nil) // no chromeFlags passed at all
+	withNil := mk(nil)
+	withEmpty := mk(map[string]string{})
+
+	if strings.Join(baseline, " ") != strings.Join(withNil, " ") {
+		t.Errorf("nil chromeFlags must equal baseline\nbaseline: %v\n     nil: %v", baseline, withNil)
+	}
+	if strings.Join(baseline, " ") != strings.Join(withEmpty, " ") {
+		t.Errorf("empty chromeFlags must equal baseline\nbaseline: %v\n   empty: %v", baseline, withEmpty)
+	}
+}
+
+// TestWithChromeFlagsOption verifies the Option function itself: merging,
+// no-op on nil/empty, last-write-wins on key collisions.
+func TestWithChromeFlagsOption(t *testing.T) {
+	e := &Executor{}
+
+	WithChromeFlags(map[string]string{"foo": "bar"})(e)
+	if e.chromeFlags["foo"] != "bar" {
+		t.Fatalf("first call: foo=%q want bar", e.chromeFlags["foo"])
+	}
+
+	WithChromeFlags(map[string]string{"baz": ""})(e)
+	if _, ok := e.chromeFlags["foo"]; !ok {
+		t.Errorf("foo lost after second call (calls should merge): %v", e.chromeFlags)
+	}
+	if v, ok := e.chromeFlags["baz"]; !ok || v != "" {
+		t.Errorf("baz missing or wrong value after second call: v=%q ok=%v", v, ok)
+	}
+
+	WithChromeFlags(map[string]string{"foo": "BAR"})(e)
+	if e.chromeFlags["foo"] != "BAR" {
+		t.Errorf("collision: want last-write-wins (BAR), got %q", e.chromeFlags["foo"])
+	}
+
+	before := len(e.chromeFlags)
+	WithChromeFlags(nil)(e)
+	WithChromeFlags(map[string]string{})(e)
+	if len(e.chromeFlags) != before {
+		t.Errorf("nil/empty calls should be no-op; len went %d -> %d", before, len(e.chromeFlags))
+	}
+}
+
 // containsArg reports whether args contains the given exact arg, OR an arg
 // that starts with arg+"=" (so we can match either a prefix like
 // "--window-position" or a fully-formed flag like "--headless=new").
