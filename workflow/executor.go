@@ -904,6 +904,25 @@ func (e *Executor) closeLocked() {
 	}
 }
 
+// ActivatePage brings the current page's tab and window to the front via
+// CDP Page.bringToFront. Useful before long-running steps that depend on
+// active render/JS timing — minimized or fully-occluded windows can be
+// throttled by the host OS (e.g. macOS App Nap) regardless of Chrome's
+// own throttling-disable flags, which causes timer-based DOM polling
+// inside upload/long-poll flows to stall.
+//
+// Returns nil if no page is attached yet (no-op) so callers can invoke
+// this defensively without first checking state. Returns the underlying
+// CDP error otherwise.
+func (e *Executor) ActivatePage() error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.page == nil {
+		return nil
+	}
+	return proto.PageBringToFront{}.Call(e.page)
+}
+
 // NavigateTo creates a new page, injects stealth, and navigates to the given URL.
 // Used by one-shot commands (inspect, screenshot, eval) that don't need a workflow.
 func (e *Executor) NavigateTo(url string) error {
