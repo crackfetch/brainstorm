@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -455,6 +456,64 @@ func (e *Executor) startLocked() error {
 	return e.connectCDP(controlURL)
 }
 
+// buildLoginArgs assembles the Chrome argv for launchForLogin. Extracted as
+// a method so tests can assert argv composition without launching Chrome.
+//
+// The argv is composed in a stable order: required base flags first,
+// platform-specific flags, profile directory pinning, caller-supplied
+// chromeFlags (sorted), window geometry, then --app=<loginURL> last so
+// process-list inspection can see the login URL at the tail.
+func (e *Executor) buildLoginArgs(absDir string, vp Viewport) []string {
+	args := []string{
+		"--remote-debugging-port=0", // OS assigns a free port; actual port read from DevToolsActivePort
+		"--no-first-run",
+		"--no-default-browser-check",
+		"--disable-blink-features=AutomationControlled",
+	}
+	// Linux CI/container environments require --no-sandbox to start Chrome at
+	// all. Without it Chrome crashes before binding the debug port, so
+	// DevToolsActivePort is never written. --disable-dev-shm-usage prevents
+	// crashes caused by /dev/shm being too small in Docker/GitHub Actions.
+	if runtime.GOOS == "linux" {
+		args = append(args, "--no-sandbox", "--disable-dev-shm-usage")
+	}
+	args = append(args, "--user-data-dir="+absDir)
+	// --profile-directory pins which profile Chrome opens inside --user-data-dir.
+	// Without this, Chrome on Windows shows the multi-profile picker when Local
+	// State lists more than one profile, hijacking the --app window. The picker
+	// never writes DevToolsActivePort, so the caller's port discovery polls
+	// forever. Caller can override via WithChromeFlags({"profile-directory": "..."}).
+	if _, set := e.chromeFlags["profile-directory"]; !set {
+		args = append(args, "--profile-directory=Default")
+	}
+	// Merge caller-supplied Chrome flags (WithChromeFlags). Sorted for stable
+	// argv ordering across runs — flag order doesn't matter to Chrome but a
+	// stable order makes test assertions and process-list inspection easier.
+	flagKeys := make([]string, 0, len(e.chromeFlags))
+	for k := range e.chromeFlags {
+		flagKeys = append(flagKeys, k)
+	}
+	sort.Strings(flagKeys)
+	for _, k := range flagKeys {
+		v := e.chromeFlags[k]
+		if v == "" {
+			args = append(args, "--"+k)
+		} else {
+			args = append(args, "--"+k+"="+v)
+		}
+	}
+	args = append(args, fmt.Sprintf("--window-size=%d,%d", vp.Width, vp.Height))
+	args = append(args, "--window-position=100,100")
+	// Use --app= instead of a bare URL argument. When Chrome sees a bare URL
+	// and another Chrome instance is already running, Windows Chrome delegates
+	// to the existing instance via a named pipe and exits with status 0. The
+	// --app= flag makes Chrome treat this as an app-mode launch, which bypasses
+	// the singleton delegation and starts a fully independent instance with its
+	// own debug port. The trade-off is no address bar, which the agent doesn't need.
+	args = append(args, "--app="+e.loginURL)
+	return args
+}
+
 // launchForLogin starts Chrome directly (bypassing rod's launcher) with the
 // login URL and a remote debugging port. This avoids two problems:
 // 1. Rod's launcher connects CDP immediately, which triggers bot detection
@@ -481,21 +540,12 @@ func (e *Executor) launchForLogin(l *launcher.Launcher) error {
 		return fmt.Errorf("profileDir is required when using WithLoginURL (needed for debug port discovery)")
 	}
 
-	args := []string{
-		"--remote-debugging-port=0", // OS assigns a free port; actual port read from DevToolsActivePort
-		"--no-first-run",
-		"--no-default-browser-check",
-		"--disable-blink-features=AutomationControlled",
-	}
-	// Linux CI/container environments require --no-sandbox to start Chrome at
-	// all. Without it Chrome crashes before binding the debug port, so
-	// DevToolsActivePort is never written. --disable-dev-shm-usage prevents
-	// crashes caused by /dev/shm being too small in Docker/GitHub Actions.
-	if runtime.GOOS == "linux" {
-		args = append(args, "--no-sandbox", "--disable-dev-shm-usage")
-	}
 	absDir, _ := filepath.Abs(e.profileDir)
-	args = append(args, "--user-data-dir="+absDir)
+	vp := DefaultViewport()
+	if e.workflow != nil && e.workflow.Viewport != nil {
+		vp = *e.workflow.Viewport
+	}
+	args := e.buildLoginArgs(absDir, vp)
 
 	// Stale-port-race guard (#41): delete any DevToolsActivePort left behind
 	// by a previous Chrome run against this profile dir. Chrome only writes
@@ -509,20 +559,6 @@ func (e *Executor) launchForLogin(l *launcher.Launcher) error {
 	// before launch so discoverDebugPort can reject reads whose mtime
 	// hasn't advanced past it.
 	preLaunch := time.Now()
-
-	vp := DefaultViewport()
-	if e.workflow != nil && e.workflow.Viewport != nil {
-		vp = *e.workflow.Viewport
-	}
-	args = append(args, fmt.Sprintf("--window-size=%d,%d", vp.Width, vp.Height))
-	args = append(args, "--window-position=100,100")
-	// Use --app= instead of a bare URL argument. When Chrome sees a bare URL
-	// and another Chrome instance is already running, Windows Chrome delegates
-	// to the existing instance via a named pipe and exits with status 0. The
-	// --app= flag makes Chrome treat this as an app-mode launch, which bypasses
-	// the singleton delegation and starts a fully independent instance with its
-	// own debug port. The trade-off is no address bar, which the agent doesn't need.
-	args = append(args, "--app="+e.loginURL)
 
 	cmd := exec.Command(bin, args...)
 	cmd.Stdout = io.Discard
