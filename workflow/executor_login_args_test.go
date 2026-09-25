@@ -75,18 +75,36 @@ func TestBuildLoginArgs_AppURLLast(t *testing.T) {
 	}
 }
 
-// TestBuildLoginArgs_LinuxAddsSandboxFlags asserts the Linux-specific flags
-// only appear on linux. Sandbox + dev/shm flags are required for CI/Docker.
-func TestBuildLoginArgs_LinuxAddsSandboxFlags(t *testing.T) {
+func TestBuildLoginArgs_NeverDisablesSandboxByDefault(t *testing.T) {
 	e := &Executor{loginURL: "https://example.com/login"}
 	args := e.buildLoginArgs("/tmp/profile", DefaultViewport())
 
-	hasSandbox := containsFlag(args, "--no-sandbox")
-	if runtime.GOOS == "linux" && !hasSandbox {
-		t.Errorf("expected --no-sandbox on linux, got: %v", args)
+	if containsFlag(args, "--no-sandbox") {
+		t.Errorf("default login args must not include --no-sandbox on %s, got: %v", runtime.GOOS, args)
 	}
-	if runtime.GOOS != "linux" && hasSandbox {
-		t.Errorf("did not expect --no-sandbox on %s, got: %v", runtime.GOOS, args)
+}
+
+func TestBuildLoginArgs_LinuxKeepsDevShmFlag(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("linux-only assertion")
+	}
+	e := &Executor{loginURL: "https://example.com/login"}
+	args := e.buildLoginArgs("/tmp/profile", DefaultViewport())
+
+	if !containsFlag(args, "--disable-dev-shm-usage") {
+		t.Errorf("expected --disable-dev-shm-usage on linux, got: %v", args)
+	}
+}
+
+func TestBuildLoginArgs_NoSandboxStillOverridable(t *testing.T) {
+	e := &Executor{
+		loginURL:    "https://example.com/login",
+		chromeFlags: map[string]string{"no-sandbox": ""},
+	}
+	args := e.buildLoginArgs("/tmp/profile", DefaultViewport())
+
+	if !containsFlag(args, "--no-sandbox") {
+		t.Errorf("expected caller-supplied --no-sandbox in argv, got: %v", args)
 	}
 }
 
