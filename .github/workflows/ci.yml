@@ -7,6 +7,15 @@ on:
     branches: [main]
 
 jobs:
+  windows-version-probe:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+      - run: go test ./workflow -run '^TestDetectChromeVersion$' -timeout 30s -v
+
   test:
     runs-on: ubuntu-latest
     steps:
