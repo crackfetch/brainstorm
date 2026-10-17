@@ -258,6 +258,10 @@ func parseChromeVersion(output string) int {
 // detectChromeVersion runs `<binPath> --version` and returns the major version.
 // Returns 0 if the binary can't be run or the output can't be parsed.
 func detectChromeVersion(binPath string) int {
+	// Windows Chromium treats --version as a GUI launch, which can wait forever.
+	if runtime.GOOS == "windows" {
+		return 0
+	}
 	out, err := exec.Command(binPath, "--version").Output()
 	if err != nil {
 		return 0
